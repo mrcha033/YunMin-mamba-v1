@@ -75,14 +75,12 @@ class MaskedLinear(nn.Linear):
         Compute sparsity regularization loss.
         This centralizes all loss computation logic.
         """
-        current_sparsity = self.mask_generator.get_sparsity()
-        
         if self.target_sparsity is not None:
-            # L1 loss towards target sparsity (convert to tensor)
-            sparsity_loss = torch.abs(
-                torch.tensor(current_sparsity, device=self.weight.device) - 
-                torch.tensor(self.target_sparsity, device=self.weight.device)
-            )
+            # Re-calculate sparsity here, keeping it as a tensor to preserve gradients
+            current_prob = torch.sigmoid(self.mask_generator.logits)
+            current_sparsity = 1 - current_prob.mean()
+            
+            sparsity_loss = torch.abs(current_sparsity - self.target_sparsity)
         else:
             # Simple L1 penalty on mask logits
             sparsity_loss = torch.norm(self.mask_generator.logits, p=1)
@@ -168,14 +166,12 @@ class MaskedConv1d(nn.Conv1d):
     
     def get_sparsity_loss(self) -> torch.Tensor:
         """Compute sparsity loss for convolution layer."""
-        current_sparsity = self.mask_generator.get_sparsity()
-        
         if self.target_sparsity is not None:
-            # L1 loss towards target sparsity (convert to tensor)
-            sparsity_loss = torch.abs(
-                torch.tensor(current_sparsity, device=self.weight.device) - 
-                torch.tensor(self.target_sparsity, device=self.weight.device)
-            )
+            # Re-calculate sparsity here, keeping it as a tensor to preserve gradients
+            current_prob = torch.sigmoid(self.mask_generator.logits)
+            current_sparsity = 1 - current_prob.mean()
+            
+            sparsity_loss = torch.abs(current_sparsity - self.target_sparsity)
         else:
             # Simple L1 penalty on mask logits
             sparsity_loss = torch.norm(self.mask_generator.logits, p=1)

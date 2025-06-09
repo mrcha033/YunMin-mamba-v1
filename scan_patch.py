@@ -1,6 +1,22 @@
 """
-Scan Patch Implementation
-Implements monkey-patching for Mamba mixers to apply precomputed scan permutations.
+Scan Patch Implementation for Mamba Mixers
+Implements monkey-patching to apply precomputed scan permutations to Mamba mixer modules.
+
+This module provides functions to:
+1. Apply scan permutations from .npy files to model mixers
+2. Remove scan patches and restore original behavior  
+3. Check if a model is currently patched
+
+Usage:
+    # Apply scan patch
+    apply_scan_patch(model, "scan_order.npy", "scan_order_inv.npy")
+    
+    # Check patch status
+    if is_scan_patched():
+        print("Model is patched")
+    
+    # Remove patch
+    remove_scan_patch(model)
 """
 
 import torch

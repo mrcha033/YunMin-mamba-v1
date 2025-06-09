@@ -112,6 +112,9 @@ class PEFTManager:
             return model, []
 
         logging.info("Applying PEFT configuration...")
+        
+        # FIX: Capture the state of parameters BEFORE any modifications
+        params_before = set(model.parameters())
 
         if self.config.enable_ia3:
             logging.info("Inserting IA³ modules...")

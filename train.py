@@ -31,6 +31,12 @@ except ImportError:
     warnings.warn("PEFT library not available. PEFT functionality will be disabled.")
     PEFT_AVAILABLE = False
 
+# IA3 utilities
+try:
+    from .ia3_layers import insert_ia3_modules
+except ImportError:
+    from ia3_layers import insert_ia3_modules
+
 # Wandb for logging with fallback
 try:
     import wandb
@@ -71,6 +77,7 @@ class TrainingConfig:
     peft_r: int = 16
     peft_alpha: int = 32
     peft_dropout: float = 0.1
+    enable_ia3: bool = False
     
     # Scan optimization (Pillar 1)
     scan_update_frequency: int = 1000
@@ -98,16 +105,18 @@ class PEFTManager:
 
     def apply_peft_to_model(self, model: nn.Module) -> Tuple[nn.Module, List[nn.Parameter]]:
         """
-        Applies a PEFT configuration and returns the model and new trainable parameters.
+        Applies PEFT configurations to the model.
+        Optionally inserts IA³ modules before applying LoRA adapters.
         """
         if not PEFT_AVAILABLE or not self.config.enable_peft or self.peft_applied:
             return model, []
 
         logging.info("Applying PEFT configuration...")
-        
-        # Get parameters before applying PEFT
-        params_before = set(model.parameters())
-        
+
+        if self.config.enable_ia3:
+            logging.info("Inserting IA³ modules...")
+            insert_ia3_modules(model)
+
         # Define target modules for LoRA - typically the main projections
         target_modules = []
         for name, module in model.named_modules():
@@ -483,6 +492,7 @@ def main():
         learning_rate=1e-4,
         enable_masking=True,
         enable_peft=PEFT_AVAILABLE,  # Enable only if PEFT is available
+        enable_ia3=False,
         log_interval=10,
         eval_interval=50,
         save_interval=100,

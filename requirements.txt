@@ -5,6 +5,10 @@ numpy>=1.21.0
 # PEFT (Parameter Efficient Fine-Tuning)
 peft>=0.4.0
 
+# Mamba State Space Models (Optional - fallback implementation available)
+# Uncomment the line below if you want to use the official optimized Mamba implementation
+# mamba-ssm>=1.0.0
+
 # Transformers and NLP
 transformers>=4.21.0
 datasets>=2.0.0

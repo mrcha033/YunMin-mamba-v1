@@ -34,7 +34,7 @@ class ResearchConfig:
     # Hyperparameter grids for systematic exploration
     lora_ranks: List[int] = field(default_factory=lambda: [4, 8, 16])
     mask_temperatures: List[float] = field(default_factory=lambda: [0.3, 0.5, 0.8])
-    importance_thresholds: List[float] = field(default_factory=lambda: [0.1, 0.2, 0.3])  # Top 10%, 20%, 30%
+    # importance_thresholds: List[float] = field(default_factory=lambda: [0.1, 0.2, 0.3])  # Top 10%, 20%, 30% - REMOVED
     masking_ratios: List[float] = field(default_factory=lambda: [0.3, 0.5, 0.7])
     scan_dimensions: List[int] = field(default_factory=lambda: [64, 128, 256])
     
@@ -67,21 +67,19 @@ class ResearchConfig:
             return [{
                 'lora_rank': 8,
                 'mask_temperature': 0.5,
-                'importance_threshold': 0.2,
                 'masking_ratio': 0.5,
                 'scan_dimension': 128
             }]
         
         # Full grid search
         combinations = []
-        for lora_rank, temp, threshold, mask_ratio, scan_dim in product(
-            self.lora_ranks, self.mask_temperatures, self.importance_thresholds,
+        for lora_rank, temp, mask_ratio, scan_dim in product(
+            self.lora_ranks, self.mask_temperatures,
             self.masking_ratios, self.scan_dimensions
         ):
             combinations.append({
                 'lora_rank': lora_rank,
                 'mask_temperature': temp,
-                'importance_threshold': threshold,
                 'masking_ratio': mask_ratio,
                 'scan_dimension': scan_dim
             })
@@ -263,9 +261,9 @@ class ResearchAblationStudy:
             output_dir=str(self.output_dir / experiment_name),
             
             # Hyperparameter configuration
-            lora_rank=hyperparams['lora_rank'],
-            mask_temperature=hyperparams['mask_temperature'],
-            importance_threshold=hyperparams['importance_threshold'],
+            peft_r=hyperparams['lora_rank'],
+            masking_tau=hyperparams['mask_temperature'],
+            masking_target_sparsity=hyperparams['masking_ratio'],
             
             # Pillar configuration
             **self._get_pillar_config(pillar_config)
@@ -844,7 +842,7 @@ class ResearchAblationStudy:
         axes[0, 1].set_ylabel('Efficiency Score')
         
         # Threshold impact
-        axes[1, 0].boxplot([df[df['importance_threshold'] == th]['efficiency_score'] for th in df['importance_threshold'].unique()])
+        # Removed importance_threshold plot as this parameter is no longer used
         axes[1, 0].set_title('Importance Threshold Impact on Efficiency')
         axes[1, 0].set_xlabel('Threshold')
         axes[1, 0].set_ylabel('Efficiency Score')
@@ -909,7 +907,7 @@ class ResearchAblationStudy:
 ## Executive Summary
 Total experiments conducted: {len(self.results)}
 Pillar combinations tested: {len(df['pillar_combo'].unique())}
-Hyperparameter configurations: {len(df.groupby(['lora_rank', 'mask_temperature', 'importance_threshold', 'masking_ratio', 'scan_dimension']))}
+        Hyperparameter configurations: {len(df.groupby(['lora_rank', 'mask_temperature', 'masking_ratio', 'scan_dimension']))}
 
 ## Key Findings
 
@@ -951,7 +949,7 @@ Synergy improvement: {synergy_improvement:.1f}%
 ### Hyperparameter Impact
 - Best LoRA rank: {best_efficiency['lora_rank']}
 - Best mask temperature: {best_efficiency['mask_temperature']}
-- Best importance threshold: {best_efficiency['importance_threshold']}
+        # Best importance threshold parameter removed
 - Best masking ratio: {best_efficiency['masking_ratio']}
 
 ### Performance Metrics Summary
@@ -1021,7 +1019,7 @@ def main():
         config.base_epochs = 1
         config.lora_ranks = [8]
         config.mask_temperatures = [0.5]
-        config.importance_thresholds = [0.2]
+        # config.importance_thresholds = [0.2]  # Removed
         config.masking_ratios = [0.5]
         config.scan_dimensions = [128]
     elif args.mode == "quick_research":
@@ -1030,7 +1028,7 @@ def main():
         config.base_epochs = 2
         config.lora_ranks = [4, 8]
         config.mask_temperatures = [0.3, 0.5]
-        config.importance_thresholds = [0.1, 0.2]
+        # config.importance_thresholds = [0.1, 0.2]  # Removed
         config.masking_ratios = [0.3, 0.5]
         config.scan_dimensions = [64, 128]
     

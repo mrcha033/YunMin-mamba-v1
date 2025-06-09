@@ -36,7 +36,7 @@ class ResearchConfig:
     mask_temperatures: List[float] = field(default_factory=lambda: [0.3, 0.5, 0.8])
     # importance_thresholds: List[float] = field(default_factory=lambda: [0.1, 0.2, 0.3])  # Top 10%, 20%, 30% - REMOVED
     masking_ratios: List[float] = field(default_factory=lambda: [0.3, 0.5, 0.7])
-    scan_dimensions: List[int] = field(default_factory=lambda: [64, 128, 256])
+    d_models: List[int] = field(default_factory=lambda: [64, 128, 256])
     
     # Experiment parameters
     base_epochs: int = 3
@@ -61,27 +61,24 @@ class ResearchConfig:
     entity: str = None
     
     def get_experiment_grid(self) -> List[Dict[str, Any]]:
-        """Generate hyperparameter combinations for grid search."""
+        """Generate hyperparameter combinations for grid search (excluding d_model)."""
         if not self.enable_grid_search:
             # Single configuration for quick testing
             return [{
                 'lora_rank': 8,
                 'mask_temperature': 0.5,
-                'masking_ratio': 0.5,
-                'scan_dimension': 128
+                'masking_ratio': 0.5
             }]
         
-        # Full grid search
+        # Full grid search - excluding d_model as it's handled separately
         combinations = []
-        for lora_rank, temp, mask_ratio, scan_dim in product(
-            self.lora_ranks, self.mask_temperatures,
-            self.masking_ratios, self.scan_dimensions
+        for lora_rank, temp, mask_ratio in product(
+            self.lora_ranks, self.mask_temperatures, self.masking_ratios
         ):
             combinations.append({
                 'lora_rank': lora_rank,
                 'mask_temperature': temp,
-                'masking_ratio': mask_ratio,
-                'scan_dimension': scan_dim
+                'masking_ratio': mask_ratio
             })
         
         return combinations
@@ -247,7 +244,7 @@ class ResearchAblationStudy:
         # Create training configuration
         config = TrainingConfig(
             vocab_size=2000,
-            d_model=hyperparams['scan_dimension'],
+            d_model=hyperparams['d_model'],
             n_layers=6,
             batch_size=self.config.base_batch_size,
             num_epochs=self.config.base_epochs,
@@ -529,61 +526,137 @@ class ResearchAblationStudy:
         return stats
     
     def run_comprehensive_study(self) -> List[ExperimentResult]:
-        """Run comprehensive ablation study with grid search."""
+        """Run comprehensive ablation study, stratified by model size."""
         
         pillar_combinations = [
             "baseline", "scan_only", "masking_only", "peft_only",
             "scan_masking", "scan_peft", "masking_peft", "all_pillars"
         ]
         
-        hyperparam_grid = self.config.get_experiment_grid()
+        # Get the base hyperparameter grid, excluding d_model
+        base_hyperparam_grid = self.config.get_experiment_grid()
         
-        logging.info(f"🎯 Starting comprehensive research study")
+        logging.info(f"🎯 Starting comprehensive research study (stratified by model size)")
+        logging.info(f"Model sizes: {self.config.d_models}")
         logging.info(f"Pillar combinations: {len(pillar_combinations)}")
-        logging.info(f"Hyperparameter configurations: {len(hyperparam_grid)}")
-        logging.info(f"Total experiments: {len(pillar_combinations) * len(hyperparam_grid)}")
+        logging.info(f"Hyperparameter configurations per model: {len(base_hyperparam_grid)}")
+        logging.info(f"Total experiments: {len(self.config.d_models) * len(pillar_combinations) * len(base_hyperparam_grid)}")
         
         all_results = []
         
-        for pillar_combo in pillar_combinations:
-            for hyperparams in hyperparam_grid:
-                try:
-                    # Initialize wandb for this experiment
-                    exp_name = f"{pillar_combo}_r{hyperparams['lora_rank']}_t{hyperparams['mask_temperature']}"
-                    wandb.init(
-                        project=self.config.project_name,
-                        entity=self.config.entity,
-                        name=exp_name,
-                        tags=self._generate_tags(pillar_combo, hyperparams),
-                        reinit=True
-                    )
-                    
-                    # Run experiment
-                    result = self.run_pillar_experiment(pillar_combo, hyperparams)
-                    all_results.append(result)
-                    
-                    wandb.finish()
-                    
-                except Exception as e:
-                    logging.error(f"❌ Error in experiment {pillar_combo}: {e}")
-                    if wandb.run is not None:
+        # Top-level loop for each model size
+        for d_model in self.config.d_models:
+            logging.info(f"====== 🔬 Starting Study for d_model = {d_model} 🔬 ======")
+            model_size_results = []
+
+            for pillar_combo in pillar_combinations:
+                for base_hyperparams in base_hyperparam_grid:
+                    # Add current d_model to the hyperparams for this run
+                    hyperparams = base_hyperparams.copy()
+                    hyperparams['d_model'] = d_model
+
+                    try:
+                        # Initialize wandb for this experiment
+                        exp_name = f"{pillar_combo}_d{d_model}_r{hyperparams['lora_rank']}_t{hyperparams['mask_temperature']}"
+                        wandb.init(
+                            project=self.config.project_name,
+                            entity=self.config.entity,
+                            name=exp_name,
+                            tags=self._generate_tags(pillar_combo, hyperparams),
+                            reinit=True
+                        )
+                        
+                        # Run experiment
+                        result = self.run_pillar_experiment(pillar_combo, hyperparams)
+                        model_size_results.append(result)
+                        all_results.append(result)
+                        
                         wandb.finish()
-                    continue
-        
+                        
+                    except Exception as e:
+                        logging.error(f"❌ Error in experiment {pillar_combo} (d_model={d_model}): {e}")
+                        if wandb.run is not None:
+                            wandb.finish()
+                        continue
+            
+            # After completing all runs for a given d_model, generate its specific report
+            logging.info(f"📊 Generating analysis for d_model = {d_model}")
+            self.generate_visualizations_and_reports(model_size_results, f"_d{d_model}")
+
         self.results = all_results
         
-        # Generate analysis and visualizations
+        # Generate overall analysis combining all model sizes
         if self.config.enable_visualization:
             self.generate_visualizations()
         
         self.save_results()
         self.generate_research_report()
         
+        logging.info("====== ✅ Entire Research Study Completed ✅ ======")
         return all_results
+    
+    def generate_visualizations_and_reports(self, results: List[ExperimentResult], suffix: str):
+        """Generate stratified analysis for a specific subset of results."""
+        if not results:
+            return
+        
+        # Create stratified output directory
+        stratified_dir = self.output_dir / f"stratified{suffix}"
+        stratified_dir.mkdir(exist_ok=True)
+        (stratified_dir / "plots").mkdir(exist_ok=True)
+        
+        # Save stratified results to temporary instance
+        original_results = self.results
+        original_output_dir = self.output_dir
+        
+        self.results = results
+        self.output_dir = stratified_dir
+        
+        try:
+            # Generate visualizations for this stratum
+            df = self._results_to_dataframe()
+            
+            # 1. FLOPs vs. Accuracy Plot
+            self._plot_flops_vs_accuracy(df)
+            
+            # 2. Params vs. Accuracy Plot  
+            self._plot_params_vs_accuracy(df)
+            
+            # 3. 3D Efficiency Score Surface
+            self._plot_efficiency_surface(df)
+            
+            # 4. Hyperparameter Impact Analysis
+            self._plot_hyperparameter_impact(df)
+            
+            # Save stratified results
+            results_data = []
+            for result in results:
+                result_dict = {
+                    'experiment_name': result.experiment_name,
+                    'hyperparams': result.hyperparams,
+                    'final_perplexity': result.final_perplexity,
+                    'parameter_reduction': result.parameter_reduction,
+                    'efficiency_score': result.calculate_efficiency_score(),
+                    'total_flops': result.total_flops,
+                    'final_trainable_params': result.final_trainable_params,
+                    'average_sparsity': result.average_sparsity
+                }
+                results_data.append(result_dict)
+            
+            with open(stratified_dir / f"stratified_results{suffix}.json", 'w') as f:
+                json.dump(results_data, f, indent=2, default=str)
+            
+            logging.info(f"📊 Stratified analysis{suffix} saved to {stratified_dir}")
+            
+        finally:
+            # Restore original state
+            self.results = original_results
+            self.output_dir = original_output_dir
     
     def _generate_tags(self, pillar_combo: str, hyperparams: Dict[str, Any]) -> List[str]:
         """Generate wandb tags for experiment."""
         tags = ["research_study", pillar_combo]
+        tags.append(f"d_model_{hyperparams['d_model']}")
         tags.append(f"rank_{hyperparams['lora_rank']}")
         tags.append(f"temp_{str(hyperparams['mask_temperature']).replace('.', '_')}")
         return tags

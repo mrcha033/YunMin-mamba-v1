@@ -96,15 +96,17 @@ class PEFTManager:
         self.config = config
         self.peft_applied = False
 
-    def apply_peft_to_model(self, model: nn.Module) -> nn.Module:
+    def apply_peft_to_model(self, model: nn.Module) -> Tuple[nn.Module, List[nn.Parameter]]:
         """
-        Applies a PEFT configuration to the model.
-        This version applies LoRA to all specified linear layers.
+        Applies a PEFT configuration and returns the model and new trainable parameters.
         """
         if not PEFT_AVAILABLE or not self.config.enable_peft or self.peft_applied:
-            return model
+            return model, []
 
         logging.info("Applying PEFT configuration...")
+        
+        # Get parameters before applying PEFT
+        params_before = set(model.parameters())
         
         # Define target modules for LoRA - typically the main projections
         target_modules = []
@@ -125,7 +127,7 @@ class PEFTManager:
         
         if not target_modules:
             logging.warning("No target modules found for PEFT. Skipping.")
-            return model
+            return model, []
 
         logging.info(f"Applying LoRA to target modules: {target_modules}")
         
@@ -140,11 +142,16 @@ class PEFTManager:
         
         peft_model = get_peft_model(model, lora_config)
         
+        # Identify newly added parameters
+        params_after = set(peft_model.parameters())
+        new_params = [p for p in params_after if p not in params_before and p.requires_grad]
+        
+        logging.info(f"Identified {len(new_params)} new trainable PEFT parameters.")
         logging.info("PEFT applied successfully.")
         peft_model.print_trainable_parameters()
         
         self.peft_applied = True
-        return peft_model
+        return peft_model, new_params
 
 class SimpleDataset(Dataset):
     """Simple synthetic dataset for demonstration."""
@@ -333,9 +340,11 @@ class AdaptiveMambaTrainer:
         
         # Apply PEFT after warmup (Pillar 3)
         if self.global_step == self.config.warmup_steps and not self.peft_manager.peft_applied:
-            self.model = self.peft_manager.apply_peft_to_model(self.model)
-            # Re-initialize optimizer to only train adapter weights
-            self.optimizer = optim.AdamW(self.model.parameters(), lr=self.config.learning_rate)
+            self.model, new_peft_params = self.peft_manager.apply_peft_to_model(self.model)
+            if new_peft_params:
+                # Add only the new PEFT parameters to the existing optimizer
+                self.optimizer.add_param_group({"params": new_peft_params})
+                logging.info("Added PEFT parameter group to existing optimizer.")
         
         self.global_step += 1
         return metrics

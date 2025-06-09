@@ -17,9 +17,7 @@ from .variable_scan import (
 # Pillar 2: Learned Masking
 from .learned_mask import (
     LearnedMask,
-    AdaptiveSparsityMask,
-    compute_importance_score,
-    apply_structured_pruning
+    AdaptiveSparsityMask
 )
 
 from .masked_linear import (
@@ -43,8 +41,6 @@ __all__ = [
     # Pillar 2
     'LearnedMask',
     'AdaptiveSparsityMask',
-    'compute_importance_score',
-    'apply_structured_pruning',
     'MaskedLinear',
     'MaskedConv1d',
     'convert_to_masked',

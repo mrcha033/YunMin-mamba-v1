@@ -10,6 +10,8 @@ This guide covers the systematic evaluation of **YunMin Correlation Scan** techn
 | **LoRA-only** | PEFT @ SSM-only | LoRA on 4 SSM layers only |
 | **Scan-only** | π insertion | Correlation scan permutation |
 | **Hybrid** | LoRA + Scan | Combined approach |
+| **IA³-only** | Channel scaling | Per-channel vectors |
+| **IA³ + LoRA** | IA³ with LoRA | Hybrid tuning |
 
 ## 📊 Metrics Tracked
 
@@ -44,12 +46,18 @@ Expected output:
 🧪 Quick test: hybrid mode
 ✅ hybrid test passed in 39.7s
 
+🧪 Quick test: ia3 mode
+✅ ia3 test passed in 40.2s
+🧪 Quick test: ia3_lora mode
+✅ ia3_lora test passed in 41.0s
 📊 Quick Test Results:
 ----------------------------------------
 baseline     ✅ PASS
 lora         ✅ PASS
 scan         ✅ PASS
 hybrid       ✅ PASS
+ia3         ✅ PASS
+ia3_lora    ✅ PASS
 
 🎯 Overall: All tests passed!
 🚀 Ready for full experiments!
@@ -68,6 +76,12 @@ python train_yunmin.py --mode lora
 
 # Scan-only
 python train_yunmin.py --mode scan
+
+# IA3-only
+python train_yunmin.py --mode ia3
+
+# IA3 + LoRA
+python train_yunmin.py --mode ia3_lora
 
 # Hybrid (LoRA + Scan)
 python train_yunmin.py --mode hybrid
@@ -93,6 +107,8 @@ Expected runtime: **~2-4 hours** depending on hardware.
 | LoRA-only | 161,698,304 | ~2,392,064 | ~1.48% |
 | Scan-only | 161,698,304 | 161,698,304 | 100.00% |
 | Hybrid | 161,698,304 | ~2,392,064 | ~1.48% |
+| IA³-only | 161,698,304 | 161,698,304 | 100.00% |
+| IA³ + LoRA | 161,698,304 | ~2,392,064 | ~1.48% |
 
 ### Performance Expectations
 
@@ -133,7 +149,7 @@ All experiments automatically log to Weights & Biases:
 
 ```bash
 python train_yunmin.py \
-  --mode {baseline,lora,scan,hybrid} \
+  --mode {baseline,lora,scan,hybrid,ia3,ia3_lora} \
   --seed 42 \
   --epochs 3 \
   --batch_size 4 \
@@ -203,6 +219,8 @@ The experiments generate publication-ready results:
 | LoRA     | 147.23 | 987.3   | 1.48       | 8.2        |
 | Scan     | 98.15  | 1,156.8 | 100.00     | 12.8       |
 | Hybrid   | 89.76  | 945.2   | 1.48       | 8.4        |
+| IA³-only | 92.34 | 900.1  | 100.00     | 8.3        |
+| IA³ + LoRA | 88.50 | 820.0   | 1.48       | 7.9        |
 ```
 
 ### Key Performance Indicators

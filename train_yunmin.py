@@ -17,6 +17,7 @@ from transformers import (
 from datasets import load_dataset
 from peft import get_peft_model, LoraConfig, TaskType
 from scan_patch import apply_scan_patch, is_scan_patched
+from ia3_layers import insert_ia3_modules
 
 # -------------------------
 # Memory & Performance Monitoring
@@ -59,7 +60,7 @@ class PerformanceCallback(TrainerCallback):
 # -------------------------
 parser = argparse.ArgumentParser(description="YunMin Correlation Scan Experiments")
 parser.add_argument("--mode", type=str, required=True, 
-                   choices=["baseline", "lora", "scan", "hybrid"],
+                   choices=["baseline", "lora", "scan", "hybrid", "ia3", "ia3_lora"],
                    help="Training mode")
 parser.add_argument("--seed", type=int, default=42, help="Random seed")
 parser.add_argument("--epochs", type=int, default=3, help="Number of epochs")
@@ -149,7 +150,7 @@ print(f"📊 Original model: {original_total:,} total, {original_trainable:,} tr
 # Apply Scan Patch if needed
 # -------------------------
 scan_applied = False
-if args.mode in ["scan", "hybrid"]:
+if "scan" in args.mode:
     print("🔧 Applying YunMin Correlation Scan patch...")
     try:
         apply_scan_patch(model)
@@ -163,7 +164,7 @@ if args.mode in ["scan", "hybrid"]:
 # Apply LoRA if needed
 # -------------------------
 lora_applied = False
-if args.mode in ["lora", "hybrid"]:
+if "lora" in args.mode:
     print("🔧 Applying LoRA @ SSM-only...")
     target_modules = ["mixer.in_proj", "mixer.x_proj", "mixer.dt_proj", "mixer.out_proj"]
     lora_config = LoraConfig(
@@ -178,6 +179,16 @@ if args.mode in ["lora", "hybrid"]:
     lora_applied = True
     print("✅ LoRA applied")
 
+# -------------------------
+# Apply IA3 if needed
+# -------------------------
+ia3_applied = False
+if "ia3" in args.mode:
+    print("🔧 Inserting IA3 modules...")
+    insert_ia3_modules(model)
+    ia3_applied = True
+    print("✅ IA3 modules inserted")
+
 # Count final parameters
 final_total, final_trainable = count_parameters(model)
 trainable_pct = (final_trainable / final_total) * 100
@@ -185,6 +196,7 @@ trainable_pct = (final_trainable / final_total) * 100
 print(f"\n📊 Final model configuration:")
 print(f"   Mode: {args.mode}")
 print(f"   Scan Applied: {scan_applied}")
+print(f"   IA3 Applied: {ia3_applied}")
 print(f"   LoRA Applied: {lora_applied}")
 print(f"   Total Parameters: {final_total:,}")
 print(f"   Trainable Parameters: {final_trainable:,} ({trainable_pct:.2f}%)")
@@ -208,6 +220,7 @@ wandb.init(
         "max_length": args.max_length,
         "seed": args.seed,
         "scan_applied": scan_applied,
+        "ia3_applied": ia3_applied,
         "lora_applied": lora_applied,
         "total_params": final_total,
         "trainable_params": final_trainable,
@@ -284,6 +297,7 @@ if training_success:
         "total_training_time": training_time,
         "training_success": training_success,
         "scan_applied": scan_applied,
+        "ia3_applied": ia3_applied,
         "lora_applied": lora_applied,
     }
     
@@ -309,6 +323,7 @@ if training_success:
         f.write(f"Total Parameters: {final_total:,}\n")
         f.write(f"Trainable Parameters: {final_trainable:,} ({trainable_pct:.2f}%)\n")
         f.write(f"Scan Applied: {scan_applied}\n")
+        f.write(f"IA3 Applied: {ia3_applied}\n")
         f.write(f"LoRA Applied: {lora_applied}\n")
     
     print(f"📄 Results saved to: {results_file}")

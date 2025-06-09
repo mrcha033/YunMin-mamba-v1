@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 YunMin Correlation Scan Batch Experiment Runner
-Executes all 4 modes sequentially and aggregates results
+Executes all 6 modes sequentially and aggregates results
 """
 
 import subprocess
@@ -106,6 +106,8 @@ def parse_results_file(mode):
                     results["trainable_pct"] = float(parts[1].replace('%)', ''))
                 elif key == "Scan Applied":
                     results["scan_applied"] = value == "True"
+                elif key == "IA3 Applied":
+                    results["ia3_applied"] = value == "True"
                 elif key == "LoRA Applied":
                     results["lora_applied"] = value == "True"
                     
@@ -124,15 +126,15 @@ def main():
     print("   2. LoRA-only (PEFT @ SSM-only)")
     print("   3. Scan-only (π insertion)")
     print("   4. Hybrid (LoRA + Scan)")
+    print("   5. IA3-only (per-channel scaling)")
+    print("   6. IA3 + LoRA")
     print("=" * 60)
-    
-    modes = ["baseline", "lora", "scan", "hybrid"]
-    results = {}
-    experiment_log = []
-    
     # Create results directory
     os.makedirs("./batch_results", exist_ok=True)
     
+    modes = ["baseline", "lora", "scan", "hybrid", "ia3", "ia3_lora"]
+    results = {}
+    experiment_log = []
     total_start = time.time()
     
     for i, mode in enumerate(modes, 1):

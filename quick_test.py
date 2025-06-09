@@ -46,7 +46,7 @@ def main():
     print("🚀 YunMin Quick Test Suite")
     print("=" * 40)
     
-    modes = ["baseline", "lora", "scan", "hybrid"]
+    modes = ["baseline", "lora", "scan", "hybrid", "ia3", "ia3_lora"]
     results = {}
     
     for mode in modes:

@@ -1,7 +1,6 @@
 import subprocess
 import time
 
-
 def quick_test(mode: str) -> bool:
     """Run a quick training session for the specified mode.
 
@@ -19,4 +18,3 @@ def quick_test(mode: str) -> bool:
     completed = subprocess.run(cmd, timeout=60)
     time.sleep(0.1)
     return completed.returncode == 0
-

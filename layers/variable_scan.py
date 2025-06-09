@@ -166,3 +166,11 @@ class VariableScanOptimizer:
     def get_permutation(self) -> torch.Tensor:
         """Get current scan permutation."""
         return self.current_permutation
+
+    def get_inverse_permutation(self) -> torch.Tensor:
+        """Get inverse of the current scan permutation."""
+        inverse = torch.empty_like(self.current_permutation)
+        inverse[self.current_permutation] = torch.arange(
+            self.d_model, device=self.current_permutation.device
+        )
+        return inverse

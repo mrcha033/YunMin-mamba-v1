@@ -10,7 +10,10 @@
 5. 텍스트 생성 품질 검증
 """
 
-import torch
+import pytest
+torch = pytest.importorskip("torch")
+pytest.importorskip("transformers")
+pytest.importorskip("peft")
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from peft import get_peft_model, LoraConfig, TaskType
 import time

@@ -78,6 +78,8 @@ class TrainingConfig:
     peft_alpha: int = 32
     peft_dropout: float = 0.1
     enable_ia3: bool = False
+    importance_threshold: float = 0.5  # Fraction of tuned layers to apply LoRA
+    peft_application_ratio: float = 0.3  # Fraction of total layers to adapt
     
     # Scan optimization (Pillar 1)
     scan_update_frequency: int = 1000
@@ -103,71 +105,68 @@ class PEFTManager:
         self.config = config
         self.peft_applied = False
 
+    def _get_layer_importance_scores(self, model: nn.Module) -> Dict[str, float]:
+        """Collect importance scores from each block."""
+        scores: Dict[str, float] = {}
+        if hasattr(model, "blocks"):
+            for i, block in enumerate(model.blocks):
+                if hasattr(block, "get_importance_scores"):
+                    block_scores = block.get_importance_scores(method="mask_probability")
+                    for layer_name, score in block_scores.items():
+                        scores[f"blocks.{i}.{layer_name}"] = score
+        return scores
+
     def apply_peft_to_model(self, model: nn.Module) -> Tuple[nn.Module, List[nn.Parameter]]:
-        """
-        Applies PEFT configurations to the model.
-        Optionally inserts IA³ modules before applying LoRA adapters.
-        """
+        """Apply importance-based PEFT to the model."""
         if not PEFT_AVAILABLE or not self.config.enable_peft or self.peft_applied:
             return model, []
 
-        logging.info("Applying PEFT configuration...")
-        
-        # FIX: Capture the state of parameters BEFORE any modifications
-        params_before = set(model.parameters())
+        logging.info("Applying importance-based PEFT configuration...")
 
-        if self.config.enable_ia3:
-            logging.info("Inserting IA³ modules...")
-            insert_ia3_modules(model)
-
-        # Define target modules for LoRA - typically the main projections
-        target_modules = []
-        for name, module in model.named_modules():
-            # Import here to avoid circular imports
-            try:
-                from .layers.masked_linear import MaskedLinear
-            except ImportError:
-                from layers.masked_linear import MaskedLinear
-            
-            if isinstance(module, (MaskedLinear, nn.Linear)):
-                # A more robust check for key Mamba layers
-                if 'in_proj' in name or 'out_proj' in name or 'x_proj' in name:
-                    target_modules.append(name.split('.')[-1]) # Get the final module name
-        
-        # Remove duplicates
-        target_modules = sorted(list(set(target_modules)))
-        
-        if not target_modules:
-            logging.warning("No target modules found for PEFT. Skipping.")
+        # Collect importance scores
+        importance_scores = self._get_layer_importance_scores(model)
+        if not importance_scores:
+            logging.warning("Could not retrieve importance scores. Skipping PEFT.")
             return model, []
 
-        logging.info(f"Applying LoRA to target modules: {target_modules}")
-        
-        lora_config = LoraConfig(
-            r=self.config.peft_r,
-            lora_alpha=self.config.peft_alpha,
-            lora_dropout=self.config.peft_dropout,
-            target_modules=target_modules,
-            bias="none",
-            task_type=TaskType.CAUSAL_LM,
+        sorted_layers = sorted(importance_scores.items(), key=lambda item: item[1], reverse=True)
+        num_layers_to_tune = max(1, int(len(sorted_layers) * self.config.peft_application_ratio))
+        num_lora = int(num_layers_to_tune * self.config.importance_threshold)
+
+        lora_target_modules = [name for name, _ in sorted_layers[:num_lora]]
+        ia3_target_modules = [name for name, _ in sorted_layers[num_lora:num_layers_to_tune]]
+
+        logging.info(f"LoRA will be applied to {len(lora_target_modules)} high-importance modules.")
+        logging.info(f"IA³ will be applied to {len(ia3_target_modules)} mid-importance modules.")
+
+        params_before = set(model.parameters())
+
+        if ia3_target_modules:
+            insert_ia3_modules(model, target_module_names=ia3_target_modules)
+
+        if lora_target_modules:
+            target_names = [n.split('.')[-1] for n in lora_target_modules]
+            lora_config = LoraConfig(
+                r=self.config.peft_r,
+                lora_alpha=self.config.peft_alpha,
+                lora_dropout=self.config.peft_dropout,
+                target_modules=target_names,
+                bias="none",
+                task_type=TaskType.CAUSAL_LM,
+            )
+            model = get_peft_model(model, lora_config)
+
+        params_after = set(model.parameters())
+        new_params = [p for p in params_after if p not in params_before and p.requires_grad]
+
+        logging.info(
+            f"Identified {len(new_params)} new trainable PEFT parameters (IA³ + LoRA)."
         )
-        
-        peft_model = get_peft_model(model, lora_config)
+        if hasattr(model, "print_trainable_parameters"):
+            model.print_trainable_parameters()
 
-        # Identify newly added parameters before modifying requires_grad
-        params_after = set(peft_model.parameters())
-        new_params = [p for p in params_after if p not in params_before]
-
-        # Keep all parameters trainable for testing expectations
-        for p in peft_model.parameters():
-            p.requires_grad = True
-        
-        logging.info(f"Identified {len(new_params)} new trainable PEFT parameters.")
-        logging.info("PEFT applied successfully.")
-        peft_model.print_trainable_parameters()
-        
         self.peft_applied = True
-        return peft_model, new_params
+        return model, new_params
 
 class SimpleDataset(Dataset):
     """Simple synthetic dataset for demonstration."""

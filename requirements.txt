@@ -17,6 +17,9 @@ datasets>=2.0.0
 pandas>=1.5.0
 matplotlib>=3.5.0
 seaborn>=0.11.0
+fbcore>=0.1.0
+thop>=0.1.0
+ptflops>=0.1.0
 
 # Logging and Experiment Tracking
 wandb>=0.13.0

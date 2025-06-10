@@ -23,6 +23,10 @@ from itertools import product
 import pandas as pd
 from torch.profiler import profile, ProfilerActivity
 
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from train import AdaptiveMambaTrainer, TrainingConfig, SimpleDataset
 from research.research_datasets import DatasetFactory
 from research.research_evaluate import MultiTaskEvaluator, evaluate_model_on_task

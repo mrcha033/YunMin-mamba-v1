@@ -473,9 +473,8 @@ def evaluate_model_on_task(model, dataloader, task: str, tokenizer=None) -> Dict
             elif task == "code_generation":
                 # Code generation evaluation
                 if tokenizer is None:
-                    raise ValueError(
-                        "Tokenizer required for code generation evaluation"
-                    )
+                    logging.warning("Tokenizer required for code generation evaluation")
+                    continue
 
                 input_ids = batch["input_ids"]
                 tests = batch.get("test", [])

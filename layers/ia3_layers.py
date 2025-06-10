@@ -2,13 +2,17 @@ import torch
 import torch.nn as nn
 
 class IA3Layer(nn.Module):
-    """Per-channel scaling factor applied to activations."""
-    def __init__(self, hidden_size: int):
+    """Per-channel scaling factor applied along a specific dimension."""
+
+    def __init__(self, num_channels: int, dim: int = -1):
         super().__init__()
-        self.scaling = nn.Parameter(torch.ones(hidden_size))
+        self.scaling = nn.Parameter(torch.ones(num_channels))
+        self.dim = dim
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x * self.scaling
+        shape = [1] * x.dim()
+        shape[self.dim] = -1
+        return x * self.scaling.view(*shape)
 
 def _get_parent(model: nn.Module, name: str):
     parts = name.split('.')
@@ -18,14 +22,22 @@ def _get_parent(model: nn.Module, name: str):
     return parent, parts[-1]
 
 def insert_ia3_modules(model: nn.Module,
-                       layer_types=(nn.LayerNorm,)) -> None:
-    """Wrap specified layer types with IA3 scaling layers."""
+                       layer_types=(nn.Linear, nn.Conv1d, nn.LayerNorm)) -> None:
+    """Wrap specified layer types with IA³ scaling layers."""
     targets = [n for n, m in model.named_modules() if isinstance(m, layer_types)]
     for name in targets:
         parent, attr = _get_parent(model, name)
         layer = getattr(parent, attr)
         if isinstance(layer, nn.Sequential) and any(isinstance(m, IA3Layer) for m in layer):
             continue
-        hidden_size = layer.normalized_shape[-1]
-        ia3 = IA3Layer(hidden_size)
+
+        if isinstance(layer, nn.Linear):
+            ia3 = IA3Layer(layer.out_features, dim=-1)
+        elif isinstance(layer, nn.Conv1d):
+            ia3 = IA3Layer(layer.out_channels, dim=1)
+        elif isinstance(layer, nn.LayerNorm):
+            ia3 = IA3Layer(layer.normalized_shape[-1], dim=-1)
+        else:
+            continue
+
         setattr(parent, attr, nn.Sequential(layer, ia3))

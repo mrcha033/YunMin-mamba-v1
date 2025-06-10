@@ -153,10 +153,6 @@ class PEFTManager:
         )
         
         peft_model = get_peft_model(model, lora_config)
-
-        # Ensure base model parameters remain trainable
-        for param in peft_model.base_model.parameters():
-            param.requires_grad = True
         
         # Identify newly added parameters
         params_after = set(peft_model.parameters())

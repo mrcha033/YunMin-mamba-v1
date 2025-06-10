@@ -21,10 +21,20 @@ def _get_parent(model: nn.Module, name: str):
         parent = getattr(parent, p)
     return parent, parts[-1]
 
-def insert_ia3_modules(model: nn.Module,
+def insert_ia3_modules(model: nn.Module, target_module_names=None,
                        layer_types=(nn.Linear, nn.Conv1d, nn.LayerNorm)) -> None:
-    """Wrap specified layer types with IA³ scaling layers."""
-    targets = [n for n, m in model.named_modules() if isinstance(m, layer_types)]
+    """Wrap specified modules with IA³ layers.
+
+    Args:
+        model: Model to modify.
+        target_module_names: Specific module names to wrap. If ``None`` all
+            modules matching ``layer_types`` are wrapped.
+        layer_types: Types of layers eligible for IA³ wrapping.
+    """
+    if target_module_names is None:
+        targets = [n for n, m in model.named_modules() if isinstance(m, layer_types)]
+    else:
+        targets = target_module_names
     for name in targets:
         parent, attr = _get_parent(model, name)
         layer = getattr(parent, attr)

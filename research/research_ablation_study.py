@@ -34,7 +34,8 @@ class ResearchConfig:
     # Hyperparameter grids for systematic exploration
     lora_ranks: List[int] = field(default_factory=lambda: [4, 8, 16])
     mask_temperatures: List[float] = field(default_factory=lambda: [0.3, 0.5, 0.8])
-    # importance_thresholds: List[float] = field(default_factory=lambda: [0.1, 0.2, 0.3])  # Top 10%, 20%, 30% - REMOVED
+    importance_thresholds: List[float] = field(default_factory=lambda: [0.3, 0.5, 0.7])
+    peft_application_ratios: List[float] = field(default_factory=lambda: [0.2, 0.4, 0.6])
     masking_ratios: List[float] = field(default_factory=lambda: [0.3, 0.5, 0.7])
     d_models: List[int] = field(default_factory=lambda: [64, 128, 256])
     
@@ -72,13 +73,19 @@ class ResearchConfig:
         
         # Full grid search - excluding d_model as it's handled separately
         combinations = []
-        for lora_rank, temp, mask_ratio in product(
-            self.lora_ranks, self.mask_temperatures, self.masking_ratios
+        for lora_rank, temp, mask_ratio, thr, ratio in product(
+            self.lora_ranks,
+            self.mask_temperatures,
+            self.masking_ratios,
+            self.importance_thresholds,
+            self.peft_application_ratios,
         ):
             combinations.append({
                 'lora_rank': lora_rank,
                 'mask_temperature': temp,
-                'masking_ratio': mask_ratio
+                'masking_ratio': mask_ratio,
+                'importance_threshold': thr,
+                'peft_application_ratio': ratio,
             })
         
         return combinations
@@ -1098,7 +1105,7 @@ def main():
         config.base_epochs = 1
         config.lora_ranks = [8]
         config.mask_temperatures = [0.5]
-        # config.importance_thresholds = [0.2]  # Removed
+        config.importance_thresholds = [0.5]
         config.masking_ratios = [0.5]
         config.scan_dimensions = [128]
     elif args.mode == "quick_research":
@@ -1107,7 +1114,7 @@ def main():
         config.base_epochs = 2
         config.lora_ranks = [4, 8]
         config.mask_temperatures = [0.3, 0.5]
-        # config.importance_thresholds = [0.1, 0.2]  # Removed
+        config.importance_thresholds = [0.3, 0.5]
         config.masking_ratios = [0.3, 0.5]
         config.scan_dimensions = [64, 128]
     

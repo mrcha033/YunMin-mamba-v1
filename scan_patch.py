@@ -167,41 +167,47 @@ def apply_permutation_to_tensor(tensor: torch.Tensor, permutation: torch.Tensor)
     return tensor[..., perm]
 
 def create_scan_permutation_from_model(model: nn.Module, sample_input: torch.Tensor) -> tuple:
+    """Generate scan permutation using hidden states captured from ``model``.
+
+    Forward hooks are registered on modules whose name contains ``"mixer"``. The
+    collected states are fed into ``compute_scan_permutation`` to obtain the
+    optimal ordering. If the variable scan utilities are missing, identity
+    permutations are returned.
     """
-    Generate scan permutation based on model hidden states correlation analysis.
-    
-    Args:
-        model: The model to analyze
-        sample_input: Sample input to extract hidden states
-    
-    Returns:
-        Tuple of (forward_permutation, reverse_permutation)
-    """
+
     try:
         from layers.variable_scan import compute_scan_permutation
-        
-        # Extract hidden states by running model
-        model.eval()
-        with torch.no_grad():
-            # This is a simplified version - in practice you'd need to hook into 
-            # intermediate layers to get actual hidden states
-            _ = model(sample_input)
-            
-        # For now, generate a simple permutation based on input dimensions
-        d_model = sample_input.size(-1)
-        hidden_states = torch.randn(32, 128, d_model)  # Dummy hidden states
-        
-        # Compute optimal permutation
-        forward_perm = compute_scan_permutation(hidden_states)
-        
-        # Compute reverse permutation
-        reverse_perm = torch.zeros_like(forward_perm)
-        reverse_perm[forward_perm] = torch.arange(len(forward_perm))
-        
-        return forward_perm.numpy(), reverse_perm.numpy()
-        
     except ImportError:
         logging.warning("Variable scan module not available. Using identity permutation.")
         d_model = sample_input.size(-1) if sample_input is not None else 256
         identity = np.arange(d_model)
-        return identity, identity 
+        return identity, identity
+
+    hidden_states = []
+    hooks = []
+    def hook_fn(module, inputs, output):
+        if inputs:
+            hidden_states.append(inputs[0].detach().cpu())
+
+    for name, module in model.named_modules():
+        if "mixer" in name.lower():
+            hooks.append(module.register_forward_hook(hook_fn))
+
+    model.eval()
+    with torch.no_grad():
+        _ = model(sample_input)
+
+    for h in hooks:
+        h.remove()
+
+    if not hidden_states:
+        logging.warning("No hidden states were captured; using identity permutation.")
+        d_model = sample_input.size(-1)
+        identity = np.arange(d_model)
+        return identity, identity
+
+    hs_tensor = torch.cat(hidden_states, dim=0)
+    forward_perm = compute_scan_permutation(hs_tensor)
+    reverse_perm = torch.empty_like(forward_perm)
+    reverse_perm[forward_perm] = torch.arange(len(forward_perm))
+    return forward_perm.numpy(), reverse_perm.numpy() 

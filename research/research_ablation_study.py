@@ -773,6 +773,11 @@ class ResearchAblationStudy:
         task_metrics = {}
         try:
             if primary_task in ["language_modeling", "summarization", "question_answering", "code_generation"]:
+                # ### FIX ### Ensure model is on correct device before task evaluation
+                device = next(trainer.model.parameters()).device
+                trainer.model = trainer.model.to(device)
+                logging.error(f"[DEBUG-SLICE-TRACK] Model moved to device: {device}")
+                
                 logging.error(f"[DEBUG-SLICE-TRACK] Calling evaluate_model_on_task...")
                 task_results = evaluate_model_on_task(trainer.model, eval_dataloader, primary_task)
                 task_metrics.update(task_results)
@@ -1172,8 +1177,12 @@ class ResearchAblationStudy:
             logging.info(f"====== [RESEARCH] Starting Study for d_model = {d_model} [RESEARCH] ======")
             model_size_results = []
 
-            for pillar_combo in pillar_combinations:
-                for base_hyperparams in base_hyperparam_grid:
+            for pillar_idx, pillar_combo in enumerate(pillar_combinations):
+                logging.info(f"[LOOP] Starting pillar {pillar_idx+1}/{len(pillar_combinations)}: {pillar_combo}")
+                
+                for hyperparam_idx, base_hyperparams in enumerate(base_hyperparam_grid):
+                    logging.info(f"[LOOP] Starting hyperparams {hyperparam_idx+1}/{len(base_hyperparam_grid)} for {pillar_combo}")
+                    
                     # ### FIX ### Completely sanitize hyperparams at creation time
                     def force_sanitize_hyperparams(params):
                         """Force complete sanitization of all hyperparams to prevent any slice objects."""
@@ -1210,8 +1219,10 @@ class ResearchAblationStudy:
 
                     # ### FIX ### Initialize wandb ONCE per experiment, BEFORE creating the trainer
                     exp_name = f"{pillar_combo}_d{d_model}_r{hyperparams['lora_rank']}_t{str(hyperparams['mask_temperature']).replace('.', '_')}"
+                    logging.info(f"[LOOP] About to start experiment: {exp_name}")
                     
                     # Start a new wandb run with multiprocessing safety
+                    experiment_success = False
                     try:
                         # ### FIX ### Add multiprocessing safeguards for wandb
                         import os
@@ -1256,6 +1267,8 @@ class ResearchAblationStudy:
                         result = self.run_pillar_experiment(pillar_combo, hyperparams)
                         model_size_results.append(result)
                         all_results.append(result)
+                        experiment_success = True
+                        logging.info(f"[LOOP] Successfully completed experiment: {exp_name}")
                         
                     except Exception as e:
                         logging.error(f"[ERROR] Error in experiment {exp_name}: {e}")
@@ -1267,6 +1280,33 @@ class ResearchAblationStudy:
                                     logging.error(f"  Found slice in hyperparams[{key}] = {value}")
                                 logging.error(f"  hyperparams[{key}] = {value} (type: {type(value)})")
                         
+                        # ### FIX ### Create a fallback result for failed experiments
+                        try:
+                            fallback_result = ExperimentResult(
+                                experiment_name=exp_name,
+                                hyperparams=hyperparams,
+                                task="language_modeling",
+                                final_loss=float('inf'),
+                                final_perplexity=float('inf'),
+                                parameter_reduction=0.0,
+                                average_sparsity=0.0,
+                                task_metrics={},
+                                total_flops=0,
+                                peak_memory_mb=0.0,
+                                training_time_seconds=0.0,
+                                inference_time_ms=0.0,
+                                initial_params=0,
+                                final_trainable_params=0,
+                                final_total_params=0,
+                                layer_contributions={},
+                                masking_statistics={}
+                            )
+                            model_size_results.append(fallback_result)
+                            all_results.append(fallback_result)
+                            logging.warning(f"[LOOP] Added fallback result for failed experiment: {exp_name}")
+                        except Exception as fallback_error:
+                            logging.error(f"[ERROR] Failed to create fallback result: {fallback_error}")
+                        
                     finally:
                         # ### FIX ### Ensure wandb run is always finished
                         if wandb.run is not None:
@@ -1274,6 +1314,11 @@ class ResearchAblationStudy:
                             # Force a small delay to ensure clean session closure
                             import time
                             time.sleep(0.5)
+                        
+                        # ### FIX ### Always log completion status
+                        status = "SUCCESS" if experiment_success else "FAILED"
+                        logging.info(f"[LOOP] Experiment {exp_name} completed with status: {status}")
+                        logging.info(f"[LOOP] Moving to next experiment...")
             
             # After completing all runs for a given d_model, generate its specific report
             logging.info(f"[ANALYSIS] Generating analysis for d_model = {d_model}")

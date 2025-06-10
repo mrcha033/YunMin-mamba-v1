@@ -412,8 +412,15 @@ def evaluate_model_on_task(model, dataloader, task: str, tokenizer=None) -> Dict
     evaluator = evaluator_class()
     model.eval()
     
+    # ### FIX ### Get model device for tensor alignment
+    device = next(model.parameters()).device
+    
     with torch.no_grad():
         for batch in dataloader:
+            # ### FIX ### Move all batch tensors to model device
+            for key, value in batch.items():
+                if isinstance(value, torch.Tensor):
+                    batch[key] = value.to(device)
             
             if task == "language_modeling":
                 # Language modeling evaluation

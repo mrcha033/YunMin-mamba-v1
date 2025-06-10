@@ -140,28 +140,55 @@ def invert_permutation(x: torch.Tensor, pi: torch.Tensor) -> torch.Tensor:
 class VariableScanOptimizer:
     """
     Utility class for managing scan path optimization across training.
+    
+    Supports two modes:
+    - 'static': Compute permutation once during initialization
+    - 'dynamic': Update permutation periodically during training
     """
     
-    def __init__(self, d_model: int, update_frequency: int = 1000):
+    def __init__(self, d_model: int, mode: str = 'dynamic', update_frequency: int = 1000):
+        """
+        Args:
+            d_model: Model dimension
+            mode: 'static' or 'dynamic' - controls when permutation is computed
+            update_frequency: Steps between permutation updates (only for dynamic mode)
+        """
+        assert mode in ['static', 'dynamic'], f"Mode must be 'static' or 'dynamic', got {mode}"
+        
         self.d_model = d_model
+        self.mode = mode
         self.update_frequency = update_frequency
         self.step_count = 0
         self.current_permutation = torch.arange(d_model)
+        self.is_initialized = False  # Track if static permutation has been computed
     
     def update_permutation(self, hidden_states: torch.Tensor) -> bool:
         """
-        Update scan permutation if needed.
+        Update scan permutation based on mode.
         
+        Args:
+            hidden_states: Sample hidden states for correlation analysis
+            
         Returns:
             True if permutation was updated, False otherwise
         """
-        self.step_count += 1
+        if self.mode == 'static':
+            # Static mode: compute permutation only once
+            if not self.is_initialized:
+                self.current_permutation = compute_scan_permutation(hidden_states)
+                self.is_initialized = True
+                return True
+            return False
         
-        if self.step_count % self.update_frequency == 0:
-            self.current_permutation = compute_scan_permutation(hidden_states)
-            return True
-        
-        return False
+        elif self.mode == 'dynamic':
+            # Dynamic mode: update permutation periodically
+            self.step_count += 1
+            
+            if self.step_count % self.update_frequency == 0:
+                self.current_permutation = compute_scan_permutation(hidden_states)
+                return True
+            
+            return False
     
     def get_permutation(self) -> torch.Tensor:
         """Get current scan permutation."""

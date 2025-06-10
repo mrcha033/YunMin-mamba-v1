@@ -98,83 +98,224 @@ class TrainingConfig:
 
 class PEFTManager:
     """
-    Manages PEFT application using the official `peft` library.
-    This simplified strategy applies LoRA to linear projections and can be extended for IA³.
+    🚀 SELF-OPTIMIZING PEFT MANAGER 🚀
+    
+    Implements the "Self-Optimizing" paradigm where the model learns its own inefficiencies
+    and applies the most economical tuning methods accordingly. This is the heart of the
+    Adaptive Hybrid-PEFT Mamba architecture.
+    
+    Core Philosophy: Dynamic allocation of LoRA to high-importance layers and IA³ to 
+    mid-importance layers based on learned importance patterns from Pillar 2.
     """
     def __init__(self, config: TrainingConfig):
         self.config = config
         self.peft_applied = False
+        self.importance_cache = {}  # Cache importance scores for consistency
 
-    def _get_layer_importance_scores(self, model: nn.Module) -> Dict[str, float]:
-        """Collect importance scores from each block."""
+    def _get_comprehensive_importance_scores(self, model: nn.Module) -> Dict[str, float]:
+        """
+        Extract importance scores from ALL eligible layers across the entire model.
+        This is the foundation of the self-optimizing paradigm.
+        
+        Returns:
+            Dict mapping layer names to importance scores (higher = more important)
+        """
         scores: Dict[str, float] = {}
+        
+        # Method 1: Collect from Pillar 2 (Learned Masking) - Primary method
         if hasattr(model, "blocks"):
             for i, block in enumerate(model.blocks):
                 if hasattr(block, "get_importance_scores"):
                     block_scores = block.get_importance_scores(method="mask_probability")
                     for layer_name, score in block_scores.items():
-                        scores[f"blocks.{i}.{layer_name}"] = score
+                        full_name = f"blocks.{i}.{layer_name}"
+                        scores[full_name] = score
+                        
+        # Method 2: Fallback for non-masked layers (weight magnitude based)
+        fallback_modules = []
+        for name, module in model.named_modules():
+            if isinstance(module, (nn.Linear, nn.Conv1d)) and name not in scores:
+                # Only include modules that can benefit from PEFT
+                if any(target in name for target in ['mixer', 'in_proj', 'out_proj', 'conv1d']):
+                    scores[name] = module.weight.abs().mean().item()
+                    fallback_modules.append(name)
+        
+        if fallback_modules:
+            logging.info(f"Using fallback importance calculation for {len(fallback_modules)} non-masked modules")
+            
+        # Cache scores for consistency across the training process
+        self.importance_cache = scores.copy()
+        
+        logging.info(f"Collected importance scores from {len(scores)} eligible layers")
         return scores
 
-    def apply_peft_to_model(self, model: nn.Module) -> Tuple[nn.Module, List[nn.Parameter]]:
-        """Apply importance-based PEFT to the model."""
-        if not PEFT_AVAILABLE or not self.config.enable_peft or self.peft_applied:
-            return model, []
-
-        logging.info("Applying importance-based PEFT configuration...")
-
-        # Collect importance scores
-        importance_scores = self._get_layer_importance_scores(model)
-        if not importance_scores:
-            logging.warning("Could not retrieve importance scores. Skipping PEFT.")
-            return model, []
-
-        sorted_layers = sorted(importance_scores.items(), key=lambda item: item[1], reverse=True)
-        num_layers_to_tune = max(1, int(len(sorted_layers) * self.config.peft_application_ratio))
-        num_lora = int(num_layers_to_tune * self.config.importance_threshold)
-
-        lora_target_modules = [name for name, _ in sorted_layers[:num_lora]]
-        ia3_target_modules = [name for name, _ in sorted_layers[num_lora:num_layers_to_tune]]
-
-        logging.info(f"LoRA will be applied to {len(lora_target_modules)} high-importance modules: {lora_target_modules}")
-        logging.info(f"IA³ will be applied to {len(ia3_target_modules)} mid-importance modules: {ia3_target_modules}")
+    def _allocate_peft_methods(self, importance_scores: Dict[str, float]) -> Tuple[List[str], List[str], List[str]]:
+        """
+        🎯 CORE SELF-OPTIMIZATION LOGIC 🎯
         
-        if lora_target_modules or ia3_target_modules:
-            logging.info("Importance-based PEFT allocation:")
-            for name, score in sorted_layers[:10]:  # Log top 10 for reference
-                status = "LoRA" if name in lora_target_modules else "IA³" if name in ia3_target_modules else "Frozen"
-                logging.info(f"  {name}: {score:.4f} -> {status}")
-            if len(sorted_layers) > 10:
-                logging.info(f"  ... and {len(sorted_layers) - 10} more layers")
+        Intelligently allocate tuning methods based on learned importance patterns:
+        - High importance → LoRA (maximum expressiveness)
+        - Medium importance → IA³ (parameter efficiency)  
+        - Low importance → Frozen (computational savings)
+        
+        This implements the mathematical framework from docs/math_spec.md
+        
+        Returns:
+            Tuple of (lora_layers, ia3_layers, frozen_layers) - lists of layer names
+        """
+        if not importance_scores:
+            logging.warning("No importance scores available for PEFT allocation")
+            return [], [], []
+            
+        # Sort layers by importance (descending)
+        sorted_layers = sorted(importance_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        # Calculate allocation thresholds based on configuration
+        total_layers = len(sorted_layers)
+        num_layers_to_tune = max(1, int(total_layers * self.config.peft_application_ratio))
+        num_lora_layers = max(1, int(num_layers_to_tune * self.config.importance_threshold))
+        num_ia3_layers = num_layers_to_tune - num_lora_layers
+        
+        # Allocate methods
+        lora_layers = [name for name, _ in sorted_layers[:num_lora_layers]]
+        ia3_layers = [name for name, _ in sorted_layers[num_lora_layers:num_layers_to_tune]]
+        frozen_layers = [name for name, _ in sorted_layers[num_layers_to_tune:]]
+        
+        # Log the self-optimization decision process
+        logging.info("🧠 SELF-OPTIMIZATION ALLOCATION SUMMARY:")
+        logging.info(f"   Total layers analyzed: {total_layers}")
+        logging.info(f"   Layers selected for tuning: {num_layers_to_tune} ({self.config.peft_application_ratio:.1%})")
+        logging.info(f"   LoRA allocation: {len(lora_layers)} high-importance layers")
+        logging.info(f"   IA³ allocation: {len(ia3_layers)} mid-importance layers") 
+        logging.info(f"   Frozen: {len(frozen_layers)} low-importance layers")
+        
+        return lora_layers, ia3_layers, frozen_layers
 
+    def _log_detailed_allocation(self, sorted_layers: List[Tuple[str, float]], 
+                                lora_layers: List[str], ia3_layers: List[str]):
+        """Log detailed allocation decisions for transparency and debugging."""
+        logging.info("📊 DETAILED IMPORTANCE-DRIVEN ALLOCATION:")
+        
+        # Show top layers with their allocation decisions
+        top_layers_to_show = min(15, len(sorted_layers))
+        for name, score in sorted_layers[:top_layers_to_show]:
+            if name in lora_layers:
+                method = "LoRA (High-Importance)"
+            elif name in ia3_layers:
+                method = "IA³ (Mid-Importance)"
+            else:
+                method = "Frozen (Low-Importance)"
+            
+            # Truncate long names for readability
+            display_name = name if len(name) <= 35 else name[:32] + "..."
+            logging.info(f"   {display_name:<35} | {score:.4f} | {method}")
+        
+        if len(sorted_layers) > top_layers_to_show:
+            logging.info(f"   ... and {len(sorted_layers) - top_layers_to_show} more layers")
+
+    def apply_peft_to_model(self, model: nn.Module) -> Tuple[nn.Module, List[nn.Parameter]]:
+        """
+        🚀 APPLY SELF-OPTIMIZING PEFT ALLOCATION 🚀
+        
+        This is where the magic happens - the model learns its own inefficiencies
+        and applies the most economical tuning strategy automatically.
+        
+        Returns:
+            Tuple of (modified_model, new_peft_parameters)
+        """
+        if not PEFT_AVAILABLE or not self.config.enable_peft or self.peft_applied:
+            logging.info("PEFT application skipped (already applied or disabled)")
+            return model, []
+
+        logging.info("🧠 INITIATING SELF-OPTIMIZING PEFT ALLOCATION...")
+        
+        # Step 1: Extract comprehensive importance scores (Self-Analysis)
+        importance_scores = self._get_comprehensive_importance_scores(model)
+        if not importance_scores:
+            logging.error("❌ Failed to extract importance scores. Cannot proceed with PEFT allocation.")
+            return model, []
+
+        # Step 2: Intelligent allocation based on learned patterns (Self-Optimization)
+        lora_layers, ia3_layers, frozen_layers = self._allocate_peft_methods(importance_scores)
+        
+        # Step 3: Detailed logging for transparency
+        sorted_layers = sorted(importance_scores.items(), key=lambda x: x[1], reverse=True)
+        self._log_detailed_allocation(sorted_layers, lora_layers, ia3_layers)
+        
+        # Step 4: Apply IA³ to mid-importance layers (Parameter Efficiency)
         params_before = set(model.parameters())
-
-        if ia3_target_modules:
-            insert_ia3_modules(model, target_module_names=ia3_target_modules)
-
-        if lora_target_modules:
-            target_names = [n.split('.')[-1] for n in lora_target_modules]
-            lora_config = LoraConfig(
-                r=self.config.peft_r,
-                lora_alpha=self.config.peft_alpha,
-                lora_dropout=self.config.peft_dropout,
-                target_modules=target_names,
-                bias="none",
-                task_type=TaskType.CAUSAL_LM,
-            )
-            model = get_peft_model(model, lora_config)
-
+        if ia3_layers:
+            logging.info(f"🔧 Applying IA³ to {len(ia3_layers)} mid-importance layers...")
+            insert_ia3_modules(model, target_module_names=ia3_layers)
+            logging.info("✅ IA³ application completed")
+        
+        # Step 5: Apply LoRA to high-importance layers (Maximum Expressiveness)
+        if lora_layers:
+            logging.info(f"🔧 Applying LoRA to {len(lora_layers)} high-importance layers...")
+            
+            # Convert full module names to target module types for peft library
+            target_module_types = set()
+            for name in lora_layers:
+                if 'in_proj' in name:
+                    target_module_types.add('in_proj')
+                if 'out_proj' in name:
+                    target_module_types.add('out_proj')
+                if 'conv1d' in name:
+                    target_module_types.add('conv1d')
+                # Add other module types as needed
+            
+            if target_module_types:
+                lora_config = LoraConfig(
+                    r=self.config.peft_r,
+                    lora_alpha=self.config.peft_alpha,
+                    lora_dropout=self.config.peft_dropout,
+                    target_modules=list(target_module_types),
+                    bias="none",
+                    task_type=TaskType.CAUSAL_LM,
+                )
+                model = get_peft_model(model, lora_config)
+                logging.info("✅ LoRA application completed")
+            else:
+                logging.warning("⚠️ No compatible modules found for LoRA application")
+        
+        # Step 6: Calculate and report efficiency gains
         params_after = set(model.parameters())
         new_params = [p for p in params_after if p not in params_before and p.requires_grad]
-
-        logging.info(
-            f"Identified {len(new_params)} new trainable PEFT parameters (IA³ + LoRA)."
-        )
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        
+        efficiency_ratio = trainable_params / total_params
+        
+        logging.info("🎯 SELF-OPTIMIZATION RESULTS:")
+        logging.info(f"   New PEFT parameters: {len(new_params):,}")
+        logging.info(f"   Total parameters: {total_params:,}")
+        logging.info(f"   Trainable parameters: {trainable_params:,}")
+        logging.info(f"   Efficiency ratio: {efficiency_ratio:.1%} (lower is better)")
+        
         if hasattr(model, "print_trainable_parameters"):
             model.print_trainable_parameters()
 
         self.peft_applied = True
+        logging.info("✅ SELF-OPTIMIZING PEFT ALLOCATION COMPLETED SUCCESSFULLY")
+        
         return model, new_params
+    
+    def get_allocation_summary(self) -> Dict[str, Any]:
+        """Get summary of PEFT allocation for reporting and analysis."""
+        if not self.peft_applied:
+            return {"status": "not_applied"}
+            
+        return {
+            "status": "applied",
+            "total_layers_analyzed": len(self.importance_cache),
+            "config": {
+                "importance_threshold": self.config.importance_threshold,
+                "peft_application_ratio": self.config.peft_application_ratio,
+                "lora_rank": self.config.peft_r,
+                "lora_alpha": self.config.peft_alpha
+            },
+            "importance_scores": self.importance_cache.copy()
+        }
 
 class SimpleDataset(Dataset):
     """Simple synthetic dataset for demonstration."""

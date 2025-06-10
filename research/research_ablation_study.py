@@ -243,14 +243,61 @@ class ResearchAblationStudy:
         return perplexity
     
     def run_pillar_experiment(self, pillar_config: str, hyperparams: Dict[str, Any]) -> ExperimentResult:
-        """Run a single pillar experiment with given hyperparameters."""
+        """
+        Run a single pillar experiment with given hyperparameters.
+        
+        🔧 PEFT (Pillar 3) Allocation Strategy:
+        
+        The importance-driven PEFT allocation works as follows:
+        
+        ```python
+        # Step 1: Extract importance scores from model layers
+        importance_scores = {}
+        for block in model.blocks:
+            scores = block.get_importance_scores(method='mask_probability')
+            importance_scores.update(scores)
+        
+        # Step 2: Apply thresholds for PEFT method selection
+        sorted_layers = sorted(importance_scores.items(), key=lambda x: x[1], reverse=True)
+        
+        total_layers = len(sorted_layers)
+        tune_ratio = config.peft_application_ratio      # e.g., 0.3 (tune 30% of layers)
+        importance_threshold = config.importance_threshold  # e.g., 0.7 (70% of tuned → LoRA)
+        
+        layers_to_tune = int(total_layers * tune_ratio)
+        lora_layers = int(layers_to_tune * importance_threshold)
+        
+        # Step 3: Self-optimizing allocation strategy
+        for i, (layer_name, importance_score) in enumerate(sorted_layers):
+            if i < lora_layers:
+                apply_lora(layer_name)       # High importance → LoRA (expressiveness)
+            elif i < layers_to_tune:
+                apply_ia3(layer_name)        # Mid importance → IA³ (efficiency)
+            else:
+                freeze_layer(layer_name)     # Low importance → Frozen (savings)
+        ```
+        
+        This creates a self-optimizing system where the model learns its own 
+        inefficiencies and applies the most economical tuning methods accordingly.
+        
+        Args:
+            pillar_config: One of the pillar combinations (baseline, scan_only, etc.)
+            hyperparams: Dictionary containing all hyperparameters including d_model
+            
+        Returns:
+            ExperimentResult with comprehensive metrics including efficiency scores
+        """
         
         experiment_name = f"{pillar_config}_r{hyperparams['lora_rank']}_t{hyperparams['mask_temperature']}"
         logging.info(f"🧪 Running experiment: {experiment_name}")
         
+        # Determine vocab_size from tokenizer or use default
+        vocab_size = 2000  # Default fallback
+        tokenizer = None
+        
         # Create training configuration
         config = TrainingConfig(
-            vocab_size=2000,
+            vocab_size=vocab_size,  # Will be updated below if using real datasets
             d_model=hyperparams['d_model'],
             n_layers=6,
             batch_size=self.config.base_batch_size,
@@ -268,6 +315,10 @@ class ResearchAblationStudy:
             peft_r=hyperparams['lora_rank'],
             masking_tau=hyperparams['mask_temperature'],
             masking_target_sparsity=hyperparams['masking_ratio'],
+            
+            # PEFT allocation strategy parameters (for self-optimizing behavior)
+            importance_threshold=hyperparams.get('importance_threshold', 0.5),
+            peft_application_ratio=hyperparams.get('peft_application_ratio', 0.3),
             
             # Pillar configuration
             **self._get_pillar_config(pillar_config)
@@ -290,6 +341,13 @@ class ResearchAblationStudy:
                     num_samples=self.config.eval_samples,
                     cache_dir=self.config.dataset_cache_dir
                 )
+                
+                # Extract tokenizer and update vocab_size dynamically
+                if hasattr(train_dataset, 'tokenizer') and train_dataset.tokenizer is not None:
+                    tokenizer = train_dataset.tokenizer
+                    vocab_size = len(tokenizer.get_vocab()) if hasattr(tokenizer, 'get_vocab') else tokenizer.vocab_size
+                    config.vocab_size = vocab_size
+                    logging.info(f"✅ Updated vocab_size to {vocab_size} from {primary_task} tokenizer")
                 
                 logging.info(f"✅ Using real {primary_task} dataset")
             except Exception as e:

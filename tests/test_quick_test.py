@@ -1,6 +1,6 @@
 import subprocess
 import types
-import quick_test
+import tests.quick_test as quick_test
 
 class DummyCompleted:
     def __init__(self, returncode=0):

@@ -89,26 +89,63 @@ class MaskedLinear(nn.Linear):
     
     def get_importance_score(self, method: str = 'mask_probability') -> float:
         """
-        Compute importance score for this layer.
-        Used for PEFT selection in training script.
+        Compute importance score for this layer using specified method.
+        
+        Available methods (corresponding to math_spec.md formulations):
+        - 'mask_probability': Sigmoid(L) - average probability of weights being active
+        - 'logit_magnitude': |L| - absolute value of logits (from math spec)
+        - 'weight_magnitude': |W| - absolute value of weights 
+        - 'combined': Sigmoid(L) * |W| - combination of mask and weight importance
+        - 'mask_usage': Historical usage frequency over time
+        
+        Returns:
+            Importance score (higher = more important for PEFT allocation)
         """
-        if method == 'mask_probability':
-            # Average probability of weights being active
-            probabilities = torch.sigmoid(self.mask_generator.logits)
-            return probabilities.mean().item()
-        
-        elif method == 'weight_magnitude':
-            # Average weight magnitude
-            return self.weight.abs().mean().item()
-        
-        elif method == 'combined':
-            # Combination of mask probability and weight magnitude
-            mask_score = torch.sigmoid(self.mask_generator.logits).mean()
-            weight_score = self.weight.abs().mean()
-            return (mask_score * weight_score).item()
-        
-        else:
-            raise ValueError(f"Unknown importance method: {method}")
+        with torch.no_grad():
+            if method == 'mask_probability':
+                # Average probability of weights being active: Sigmoid(L)
+                probabilities = torch.sigmoid(self.mask_generator.logits)
+                return probabilities.mean().item()
+            
+            elif method == 'logit_magnitude':
+                # |L_{i,j}| from math specification - absolute logit values
+                logit_magnitude = torch.abs(self.mask_generator.logits)
+                return logit_magnitude.mean().item()
+            
+            elif method == 'weight_magnitude':
+                # |W_{i,j}| - average weight magnitude
+                return self.weight.abs().mean().item()
+            
+            elif method == 'combined':
+                # Sigmoid(L) * |W| - combination of mask probability and weight magnitude
+                mask_score = torch.sigmoid(self.mask_generator.logits).mean()
+                weight_score = self.weight.abs().mean()
+                return (mask_score * weight_score).item()
+            
+            elif method == 'mask_usage':
+                # Historical usage frequency: ∑M_{i,j}^{(t)} / T
+                if hasattr(self.mask_generator, 'mask_usage') and self.mask_generator.update_count > 0:
+                    avg_usage = self.mask_generator.mask_usage / self.mask_generator.update_count
+                    return avg_usage.mean().item()
+                else:
+                    # Fallback to mask probability if no usage history
+                    probabilities = torch.sigmoid(self.mask_generator.logits)
+                    return probabilities.mean().item()
+            
+            elif method == 'gradient_based':
+                # Gradient-based importance (if gradients are available)
+                if self.mask_generator.logits.grad is not None:
+                    gradient_magnitude = torch.abs(self.mask_generator.logits.grad)
+                    return gradient_magnitude.mean().item()
+                else:
+                    # Fallback to logit magnitude
+                    return torch.abs(self.mask_generator.logits).mean().item()
+            
+            else:
+                available_methods = ['mask_probability', 'logit_magnitude', 'weight_magnitude', 
+                                   'combined', 'mask_usage', 'gradient_based']
+                raise ValueError(f"Unknown importance method: {method}. "
+                               f"Available methods: {available_methods}")
     
     def get_statistics(self) -> dict:
         """Get comprehensive statistics for monitoring."""
@@ -178,12 +215,56 @@ class MaskedConv1d(nn.Conv1d):
         
         return self.sparsity_weight * sparsity_loss
     
+    def get_importance_score(self, method: str = 'mask_probability') -> float:
+        """
+        Compute importance score for this Conv1d layer.
+        Same methods as MaskedLinear but for convolution kernels.
+        """
+        with torch.no_grad():
+            if method == 'mask_probability':
+                probabilities = torch.sigmoid(self.mask_generator.logits)
+                return probabilities.mean().item()
+            
+            elif method == 'logit_magnitude':
+                logit_magnitude = torch.abs(self.mask_generator.logits)
+                return logit_magnitude.mean().item()
+            
+            elif method == 'weight_magnitude':
+                return self.weight.abs().mean().item()
+            
+            elif method == 'combined':
+                mask_score = torch.sigmoid(self.mask_generator.logits).mean()
+                weight_score = self.weight.abs().mean()
+                return (mask_score * weight_score).item()
+            
+            elif method == 'mask_usage':
+                if hasattr(self.mask_generator, 'mask_usage') and self.mask_generator.update_count > 0:
+                    avg_usage = self.mask_generator.mask_usage / self.mask_generator.update_count
+                    return avg_usage.mean().item()
+                else:
+                    probabilities = torch.sigmoid(self.mask_generator.logits)
+                    return probabilities.mean().item()
+            
+            elif method == 'gradient_based':
+                if self.mask_generator.logits.grad is not None:
+                    gradient_magnitude = torch.abs(self.mask_generator.logits.grad)
+                    return gradient_magnitude.mean().item()
+                else:
+                    return torch.abs(self.mask_generator.logits).mean().item()
+            
+            else:
+                available_methods = ['mask_probability', 'logit_magnitude', 'weight_magnitude', 
+                                   'combined', 'mask_usage', 'gradient_based']
+                raise ValueError(f"Unknown importance method: {method}. "
+                               f"Available methods: {available_methods}")
+
     def get_statistics(self) -> dict:
         """Get comprehensive statistics for monitoring."""
         mask_stats = self.mask_generator.get_mask_statistics()
         
         return {
             'current_sparsity': mask_stats.get('current_sparsity', 0.0),
+            'importance_score': self.get_importance_score(),
             'sparsity_loss': self.get_sparsity_loss().item()
         }
 

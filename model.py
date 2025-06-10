@@ -1,12 +1,156 @@
 """
-Refactored Adaptive Mamba Model Implementation
-Clean, modular design with proper separation of concerns.
+YunMin Mamba Model
+Adaptive Hybrid-PEFT Mamba
 """
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Dict, Any
+
+# Hugging Face integration
+try:
+    from transformers import PretrainedConfig
+    HF_AVAILABLE = True
+except ImportError:
+    # Fallback base class if Transformers not available
+    class PretrainedConfig:
+        def __init__(self, **kwargs):
+            for key, value in kwargs.items():
+                setattr(self, key, value)
+        
+        def to_dict(self):
+            return {k: v for k, v in self.__dict__.items() if not k.startswith('_')}
+        
+        def save_pretrained(self, save_directory):
+            import json
+            import os
+            os.makedirs(save_directory, exist_ok=True)
+            with open(os.path.join(save_directory, 'config.json'), 'w') as f:
+                json.dump(self.to_dict(), f, indent=2)
+        
+        @classmethod
+        def from_pretrained(cls, pretrained_model_name_or_path, **kwargs):
+            import json
+            import os
+            config_path = os.path.join(pretrained_model_name_or_path, 'config.json')
+            if os.path.exists(config_path):
+                with open(config_path, 'r') as f:
+                    config_dict = json.load(f)
+                config_dict.update(kwargs)
+                return cls(**config_dict)
+            else:
+                return cls(**kwargs)
+    
+    HF_AVAILABLE = False
+
+
+class AdaptiveMambaConfig(PretrainedConfig):
+    """
+    Configuration class for AdaptiveMambaModel.
+    
+    Inherits from PretrainedConfig to enable Hugging Face ecosystem integration
+    including save_pretrained(), from_pretrained(), and PEFT compatibility.
+    """
+    
+    model_type = "adaptive_mamba"
+    
+    def __init__(
+        self,
+        vocab_size: int = 32000,
+        d_model: int = 768,
+        n_layers: int = 12,
+        d_state: int = 16,
+        d_conv: int = 4,
+        expand: int = 2,
+        # Masking configuration (Pillar 2)
+        enable_masking: bool = True,
+        masking_tau: float = 0.5,
+        masking_init_sparsity: float = 0.5,
+        masking_target_sparsity: float = 0.3,
+        sparsity_weight: float = 1e-5,
+        # Scan optimization (Pillar 1)
+        enable_scan_optimization: bool = True,
+        scan_mode: str = 'dynamic',  # 'static' or 'dynamic'
+        scan_update_frequency: int = 1000,
+        # General model settings
+        pad_token_id: int = 0,
+        bos_token_id: int = 1,
+        eos_token_id: int = 2,
+        tie_word_embeddings: bool = True,
+        # Compatibility aliases
+        **kwargs
+    ):
+        """
+        Args:
+            vocab_size: Vocabulary size
+            d_model: Model dimension
+            n_layers: Number of transformer blocks
+            d_state: SSM state dimension
+            d_conv: Local convolution width  
+            expand: Expansion factor for inner dimension
+            enable_masking: Enable learned masking (Pillar 2)
+            masking_tau: Temperature for Gumbel-Sigmoid sampling
+            masking_init_sparsity: Initial sparsity level
+            masking_target_sparsity: Target sparsity for regularization
+            sparsity_weight: Weight for sparsity loss
+            enable_scan_optimization: Enable variable-aware scan (Pillar 1)
+            scan_mode: 'static' (computed once) or 'dynamic' (periodic updates)
+            scan_update_frequency: Steps between scan updates (dynamic mode only)
+        """
+        # Store all configuration
+        self.vocab_size = vocab_size
+        self.d_model = d_model
+        self.n_layers = n_layers
+        self.d_state = d_state
+        self.d_conv = d_conv
+        self.expand = expand
+        
+        # Pillar configurations
+        self.enable_masking = enable_masking
+        self.masking_tau = masking_tau
+        self.masking_init_sparsity = masking_init_sparsity
+        self.masking_target_sparsity = masking_target_sparsity
+        self.sparsity_weight = sparsity_weight
+        
+        self.enable_scan_optimization = enable_scan_optimization
+        self.scan_mode = scan_mode
+        self.scan_update_frequency = scan_update_frequency
+        
+        # Token configuration
+        self.pad_token_id = pad_token_id
+        self.bos_token_id = bos_token_id
+        self.eos_token_id = eos_token_id
+        self.tie_word_embeddings = tie_word_embeddings
+        
+        # Compatibility aliases for PEFT and other libraries
+        self.hidden_size = d_model
+        self.num_hidden_layers = n_layers
+        self.intermediate_size = int(expand * d_model)
+        
+        super().__init__(
+            pad_token_id=pad_token_id,
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs
+        )
+    
+    def get_masking_config(self) -> Dict[str, Any]:
+        """Get masking configuration for block initialization."""
+        return {
+            'tau': self.masking_tau,
+            'init_sparsity': self.masking_init_sparsity,
+            'target_sparsity': self.masking_target_sparsity,
+            'sparsity_weight': self.sparsity_weight
+        }
+    
+    def get_scan_config(self) -> Dict[str, Any]:
+        """Get scan optimization configuration."""
+        return {
+            'mode': self.scan_mode,
+            'update_frequency': self.scan_update_frequency
+        }
 
 # Pillar 1: Variable-Aware Scan
 try:
@@ -132,7 +276,13 @@ class AdaptiveMambaBlock(nn.Module):
         }
         
         # Pillar 1: Scan permutation optimizer
-        self.scan_optimizer = VariableScanOptimizer(d_model, update_frequency=1000)
+        scan_mode = kwargs.get('scan_mode', 'dynamic')
+        scan_update_freq = kwargs.get('scan_update_frequency', 1000)
+        self.scan_optimizer = VariableScanOptimizer(
+            d_model, 
+            mode=scan_mode,
+            update_frequency=scan_update_freq
+        )
         
         # Set initial permutation for reproducibility if provided
         if 'initial_permutation' in kwargs:
@@ -294,7 +444,40 @@ class AdaptiveMambaBlock(nn.Module):
 
 class AdaptiveMambaModel(nn.Module):
     """
-    Complete Adaptive Mamba model with multiple blocks.
+    Complete Adaptive Mamba model with multiple blocks implementing the 
+    Self-Optimizing paradigm through three synergistic pillars.
+    
+    Example usage with importance-driven PEFT allocation:
+    
+    ```python
+    # Create model with masking enabled
+    model = AdaptiveMambaModel(
+        vocab_size=10000,
+        d_model=256,
+        n_layers=6,
+        block_config={
+            'enable_masking': True,
+            'masking_config': {'tau': 0.5, 'target_sparsity': 0.5}
+        }
+    )
+    
+    # Extract importance scores for PEFT allocation
+    importance_scores = {}
+    for i, block in enumerate(model.blocks):
+        block_scores = block.get_importance_scores(method='mask_probability')
+        importance_scores[f'block_{i}'] = block_scores
+    
+    # Use scores for adaptive PEFT application
+    from layers.peft_manager import PEFTManager
+    peft_manager = PEFTManager(
+        importance_threshold=0.7,
+        peft_application_ratio=0.2
+    )
+    peft_manager.apply_peft_to_model(model, importance_scores)
+    
+    # Model is now self-optimized with LoRA on high-importance layers
+    # and IA³ on medium-importance layers
+    ```
     """
     
     def __init__(self, vocab_size: int, d_model: int, n_layers: int,
@@ -311,13 +494,34 @@ class AdaptiveMambaModel(nn.Module):
         self.d_model = d_model
         self.n_layers = n_layers
         
+        # Use standardized HuggingFace-compatible config
+        if isinstance(block_config, AdaptiveMambaConfig):
+            self.config = block_config
+        else:
+            self.config = AdaptiveMambaConfig(
+                vocab_size=vocab_size,
+                d_model=d_model,
+                n_layers=n_layers,
+                **(block_config or {})
+            )
+        
         # Token embedding
         self.embedding = nn.Embedding(vocab_size, d_model)
         
-        # Mamba blocks
+        # Mamba blocks - use config for consistent settings
+        block_kwargs = {
+            'd_state': self.config.d_state,
+            'd_conv': self.config.d_conv,
+            'expand': self.config.expand,
+            'enable_masking': self.config.enable_masking,
+            'masking_config': self.config.get_masking_config(),
+            'scan_mode': self.config.scan_mode,
+            'scan_update_frequency': self.config.scan_update_frequency
+        }
+        
         self.blocks = nn.ModuleList([
-            AdaptiveMambaBlock(d_model, **(block_config or {}))
-            for _ in range(n_layers)
+            AdaptiveMambaBlock(self.config.d_model, **block_kwargs)
+            for _ in range(self.config.n_layers)
         ])
         
         # Output head

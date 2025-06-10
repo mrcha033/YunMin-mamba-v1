@@ -720,16 +720,38 @@ class ResearchAblationStudy:
         layer_contributions = self._analyze_layer_contributions(trainer.model)
         masking_stats = self._collect_masking_statistics(trainer.model)
         
-        # Create result
+        # ### FIX ### Pre-sanitize all data before creating ExperimentResult
+        def sanitize_data_recursive(obj):
+            """Recursively sanitize data to prevent slice objects and other unhashable types."""
+            if isinstance(obj, slice):
+                return f"slice({obj.start},{obj.stop},{obj.step})"
+            elif isinstance(obj, float) and (obj == float('inf') or obj == float('-inf') or obj != obj):  # inf or nan
+                return 999999 if obj == float('inf') else -999999 if obj == float('-inf') else 0.0
+            elif isinstance(obj, dict):
+                return {str(k): sanitize_data_recursive(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [sanitize_data_recursive(item) for item in obj]
+            elif isinstance(obj, (int, float, str, bool, type(None))):
+                return obj
+            else:
+                return str(obj)
+        
+        # Sanitize all inputs
+        safe_hyperparams = sanitize_data_recursive(hyperparams.copy())
+        safe_task_metrics = sanitize_data_recursive(task_metrics)
+        safe_layer_contributions = sanitize_data_recursive(layer_contributions)
+        safe_masking_stats = sanitize_data_recursive(masking_stats)
+        
+        # Create result with pre-sanitized data
         result = ExperimentResult(
             experiment_name=experiment_name,
-            hyperparams=hyperparams.copy(),
+            hyperparams=safe_hyperparams,
             task=primary_task,
             final_loss=trainer.best_loss if hasattr(trainer, 'best_loss') else 0.0,
             final_perplexity=perplexity,
             parameter_reduction=(initial_params - final_trainable) / initial_params * 100,
-            average_sparsity=masking_stats.get('average_sparsity', 0.0),
-            task_metrics=task_metrics,
+            average_sparsity=safe_masking_stats.get('average_sparsity', 0.0),
+            task_metrics=safe_task_metrics,
             total_flops=total_flops,
             peak_memory_mb=peak_memory,
             training_time_seconds=training_time,
@@ -737,8 +759,8 @@ class ResearchAblationStudy:
             initial_params=initial_params,
             final_trainable_params=final_trainable,
             final_total_params=final_total,
-            layer_contributions=layer_contributions,
-            masking_statistics=masking_stats
+            layer_contributions=safe_layer_contributions,
+            masking_statistics=safe_masking_stats
         )
         
         # Log to wandb
@@ -764,11 +786,14 @@ class ResearchAblationStudy:
     
     def _get_pillar_config(self, pillar_name: str) -> Dict[str, Any]:
         """Get configuration for specific pillar combination."""
+        # ### FIX ### Use large integer instead of float('inf') to avoid JSON serialization issues
+        NO_SCAN_UPDATE = 999999  # Large integer instead of float('inf')
+        
         configs = {
             "baseline": {
                 "enable_masking": False,
                 "enable_peft": False,
-                "scan_update_frequency": float('inf')
+                "scan_update_frequency": NO_SCAN_UPDATE
             },
             "scan_only": {
                 "enable_masking": False,
@@ -778,12 +803,12 @@ class ResearchAblationStudy:
             "masking_only": {
                 "enable_masking": True,
                 "enable_peft": False,
-                "scan_update_frequency": float('inf')
+                "scan_update_frequency": NO_SCAN_UPDATE
             },
             "peft_only": {
                 "enable_masking": False,
                 "enable_peft": True,
-                "scan_update_frequency": float('inf')
+                "scan_update_frequency": NO_SCAN_UPDATE
             },
             "scan_masking": {
                 "enable_masking": True,
@@ -798,7 +823,7 @@ class ResearchAblationStudy:
             "masking_peft": {
                 "enable_masking": True,
                 "enable_peft": True,
-                "scan_update_frequency": float('inf')
+                "scan_update_frequency": NO_SCAN_UPDATE
             },
             "all_pillars": {
                 "enable_masking": True,
@@ -958,14 +983,21 @@ class ResearchAblationStudy:
                     try:
                         # ### FIX ### Add multiprocessing safeguards for wandb
                         import os
+                        import hashlib
+                        
                         if os.getenv('WANDB_MODE') != 'disabled':
+                            # ### FIX ### Generate deterministic run ID to prevent duplicates
+                            run_id_source = f"{self.config.project_name}_{exp_name}_{hashlib.md5(str(sorted(hyperparams.items())).encode()).hexdigest()[:8]}"
+                            deterministic_run_id = hashlib.md5(run_id_source.encode()).hexdigest()[:8]
+                            
                             wandb.init(
                                 project=self.config.project_name,
                                 entity=self.config.entity,
+                                id=deterministic_run_id,  # Fixed ID prevents duplicates
                                 name=exp_name,
                                 tags=self._generate_tags(pillar_combo, hyperparams),
                                 config=hyperparams,  # Pass hyperparams directly
-                                reinit=True,
+                                resume="allow",  # Allow resuming if run exists
                                 # Additional safety settings to prevent subprocess issues
                                 settings=wandb.Settings(
                                     start_method="thread",  # Use threading instead of forking

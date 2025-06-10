@@ -14,7 +14,10 @@ def quick_test(mode: str) -> bool:
     bool
         ``True`` if the subprocess exits successfully, ``False`` otherwise.
     """
-    cmd = ["python", "train.py", "--mode", mode]
+    if mode == "ia3":
+        cmd = ["python", "train_yunmin.py", "--ia3"]
+    else:
+        cmd = ["python", "train.py", "--mode", mode]
     completed = subprocess.run(cmd, timeout=60)
     time.sleep(0.1)
     return completed.returncode == 0

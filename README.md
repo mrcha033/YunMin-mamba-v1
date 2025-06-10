@@ -84,19 +84,19 @@ Setting `enable_ia3=True` causes the training script to call
 `insert_ia3_modules(model)` before LoRA adapters are attached, enabling the
 lightweight IA³ scaling factors on supported layers.
 
-### 2. Research Ablation Study (`research_ablation_study.py`)
+### 2. Research Ablation Study (`research/research_ablation_study.py`)
 
 Conduct systematic ablation studies across pillar combinations and hyperparameters:
 
 ```bash
 # Pilot study (quick testing)
-python research_ablation_study.py --mode pilot
+python research/research_ablation_study.py --mode pilot
 
 # Quick research mode
-python research_ablation_study.py --mode quick_research
+python research/research_ablation_study.py --mode quick_research
 
 # Full research mode
-python research_ablation_study.py --mode research
+python research/research_ablation_study.py --mode research
 ```
 
 **Command Line Options:**
@@ -117,12 +117,12 @@ python research_ablation_study.py --mode research
 - **Quick Research**: Moderate exploration (2 epochs, reduced grid)
 - **Research**: Full systematic study (3+ epochs, complete hyperparameter grid)
 
-### 3. Model Evaluation (`research_evaluate.py`)
+### 3. Model Evaluation (`research/research_evaluate.py`)
 
 Test evaluation metrics and components:
 
 ```bash
-python research_evaluate.py
+python research/research_evaluate.py
 ```
 
 **Features:**
@@ -228,9 +228,10 @@ YunMin-mamba-v1/
 ├── requirements.txt              # Dependencies
 ├── train.py                      # Main training script
 ├── model.py                      # Adaptive Mamba model implementation
-├── research_ablation_study.py    # Comprehensive ablation study
-├── research_evaluate.py          # Evaluation framework
-├── research_datasets.py          # Dataset utilities
+├── research/                     # Research modules
+│   ├── research_ablation_study.py    # Comprehensive ablation study
+│   ├── research_evaluate.py          # Evaluation framework
+│   └── research_datasets.py          # Dataset utilities
 ├── ia3_layers.py                 # IA³ adapter implementation
 ├── layers/                       # Core layer implementations
 │   ├── variable_scan.py          # Variable-aware scan (Pillar 1)

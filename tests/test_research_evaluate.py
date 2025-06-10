@@ -2,7 +2,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from research_evaluate import evaluate_model_on_task
+from research.research_evaluate import evaluate_model_on_task
 
 class DummyModel(torch.nn.Module):
     def __init__(self, vocab_size=10):
@@ -43,7 +43,12 @@ def test_evaluate_other_tasks():
     qa_res = evaluate_model_on_task(model, [batch_qa], "question_answering", tokenizer=tok)
     assert "exact_match" in qa_res
 
-    batch_code = {"prompt": "p", "test": "assert True", "task_id": "t1"}
-    code_res = evaluate_model_on_task(model, [batch_code], "code_generation")
+    batch_code = {
+        "prompt": "p",
+        "test": "assert True",
+        "task_id": "t1",
+        "input_ids": torch.ones((1, 2), dtype=torch.long),
+    }
+    code_res = evaluate_model_on_task(model, [batch_code], "code_generation", tokenizer=tok)
     assert "pass_at_1" in code_res
 

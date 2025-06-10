@@ -24,8 +24,8 @@ import pandas as pd
 from torch.profiler import profile, ProfilerActivity
 
 from train import AdaptiveMambaTrainer, TrainingConfig, SimpleDataset
-from research_datasets import DatasetFactory
-from research_evaluate import MultiTaskEvaluator, evaluate_model_on_task
+from research.research_datasets import DatasetFactory
+from research.research_evaluate import MultiTaskEvaluator, evaluate_model_on_task
 
 @dataclass
 class ResearchConfig:

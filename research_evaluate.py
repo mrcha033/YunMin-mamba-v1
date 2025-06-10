@@ -450,33 +450,50 @@ def evaluate_model_on_task(model, dataloader, task: str, tokenizer=None) -> Dict
             
             elif task == "question_answering":
                 # QA evaluation (simplified)
+                if tokenizer is None:
+                    raise ValueError(
+                        "Tokenizer required for question answering evaluation"
+                    )
+
                 input_ids = batch["input_ids"]
                 answers = batch.get("answer", [])
-                
-                # Generate answers
+
+                # Generate answers with the model
                 generated_ids = model.generate(
                     input_ids, max_length=50, num_beams=2
                 )
-                
-                if tokenizer:
-                    predictions = [
-                        tokenizer.decode(gen_id, skip_special_tokens=True)
-                        for gen_id in generated_ids
-                    ]
-                else:
-                    predictions = ["generated_answer"] * len(answers)
-                
+
+                predictions = [
+                    tokenizer.decode(gen_id, skip_special_tokens=True)
+                    for gen_id in generated_ids
+                ]
+
                 evaluator.add_batch(predictions, answers)
-            
+
             elif task == "code_generation":
                 # Code generation evaluation
-                prompts = batch.get("prompt", [])
+                if tokenizer is None:
+                    raise ValueError(
+                        "Tokenizer required for code generation evaluation"
+                    )
+
+                input_ids = batch["input_ids"]
                 tests = batch.get("test", [])
                 task_ids = batch.get("task_id", [])
-                
-                # Generate code (simplified)
-                predictions = [f"def solution():\n    return 42\n"] * len(prompts)
-                
+
+                # Generate code using the model
+                generated_ids = model.generate(
+                    input_ids,
+                    max_length=256,
+                    num_beams=1,
+                    do_sample=False,
+                )
+
+                predictions = [
+                    tokenizer.decode(gen_id, skip_special_tokens=True)
+                    for gen_id in generated_ids
+                ]
+
                 evaluator.add_batch(predictions, tests, task_ids)
     
     return evaluator.compute()

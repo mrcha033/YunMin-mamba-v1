@@ -972,9 +972,39 @@ class ResearchAblationStudy:
 
             for pillar_combo in pillar_combinations:
                 for base_hyperparams in base_hyperparam_grid:
+                    # ### FIX ### Completely sanitize hyperparams at creation time
+                    def force_sanitize_hyperparams(params):
+                        """Force complete sanitization of all hyperparams to prevent any slice objects."""
+                        sanitized = {}
+                        for key, value in params.items():
+                            # Ensure key is string
+                            safe_key = str(key)
+                            
+                            # Handle different value types
+                            if isinstance(value, slice):
+                                sanitized[safe_key] = f"slice({value.start},{value.stop},{value.step})"
+                            elif isinstance(value, float):
+                                if value == float('inf'):
+                                    sanitized[safe_key] = 999999
+                                elif value == float('-inf'):
+                                    sanitized[safe_key] = -999999
+                                elif value != value:  # NaN check
+                                    sanitized[safe_key] = 0.0
+                                else:
+                                    sanitized[safe_key] = float(value)
+                            elif isinstance(value, (int, str, bool, type(None))):
+                                sanitized[safe_key] = value
+                            else:
+                                # Convert any other type to string
+                                sanitized[safe_key] = str(value)
+                        return sanitized
+                    
                     # Add current d_model to the hyperparams for this run
-                    hyperparams = base_hyperparams.copy()
-                    hyperparams['d_model'] = d_model
+                    raw_hyperparams = base_hyperparams.copy()
+                    raw_hyperparams['d_model'] = d_model
+                    
+                    # Force complete sanitization
+                    hyperparams = force_sanitize_hyperparams(raw_hyperparams)
 
                     # ### FIX ### Initialize wandb ONCE per experiment, BEFORE creating the trainer
                     exp_name = f"{pillar_combo}_d{d_model}_r{hyperparams['lora_rank']}_t{str(hyperparams['mask_temperature']).replace('.', '_')}"
@@ -1015,11 +1045,21 @@ class ResearchAblationStudy:
                         
                     except Exception as e:
                         logging.error(f"[ERROR] Error in experiment {exp_name}: {e}")
+                        # ### FIX ### Debug slice object sources
+                        if "unhashable type: 'slice'" in str(e):
+                            logging.error("[DEBUG] Slice error detected. Checking hyperparams:")
+                            for key, value in hyperparams.items():
+                                if isinstance(value, slice):
+                                    logging.error(f"  Found slice in hyperparams[{key}] = {value}")
+                                logging.error(f"  hyperparams[{key}] = {value} (type: {type(value)})")
                         
                     finally:
                         # ### FIX ### Ensure wandb run is always finished
                         if wandb.run is not None:
                             wandb.finish()
+                            # Force a small delay to ensure clean session closure
+                            import time
+                            time.sleep(0.5)
             
             # After completing all runs for a given d_model, generate its specific report
             logging.info(f"[ANALYSIS] Generating analysis for d_model = {d_model}")

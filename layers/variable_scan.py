@@ -144,6 +144,8 @@ class VariableScanOptimizer:
     Supports two modes:
     - 'static': Compute permutation once during initialization
     - 'dynamic': Update permutation periodically during training
+    
+    Device-aware version that ensures all tensors are on the correct device.
     """
     
     def __init__(self, d_model: int, mode: str = 'dynamic', update_frequency: int = 1000):
@@ -159,9 +161,22 @@ class VariableScanOptimizer:
         self.mode = mode
         self.update_frequency = update_frequency
         self.step_count = 0
-        # Initialize on CPU - will be moved to correct device on first use
-        self.current_permutation = torch.arange(d_model, dtype=torch.long)
-        self.is_initialized = False  # Track if static permutation has been computed
+        self.is_initialized = False
+        
+        # Initialize internal state - starts on CPU, will be moved to correct device via to()
+        self._permutation = torch.arange(d_model, dtype=torch.long)
+        self.device = torch.device('cpu')  # Track current device
+    
+    def to(self, device) -> 'VariableScanOptimizer':
+        """
+        Move the internal state of the optimizer to the specified device.
+        Mimics the behavior of nn.Module.to().
+        """
+        if isinstance(device, str):
+            device = torch.device(device)
+        self.device = device
+        self._permutation = self._permutation.to(device)
+        return self
     
     def update_permutation(self, hidden_states: torch.Tensor) -> bool:
         """
@@ -173,10 +188,17 @@ class VariableScanOptimizer:
         Returns:
             True if permutation was updated, False otherwise
         """
+        # Defensive check: ensure optimizer is on same device as input
+        input_device = hidden_states.device
+        if self.device != input_device:
+            print(f"Warning: Optimizer device ({self.device}) differs from input device ({input_device}). Auto-moving optimizer.")
+            self.to(input_device)
+        
         if self.mode == 'static':
             # Static mode: compute permutation only once
             if not self.is_initialized:
-                self.current_permutation = compute_scan_permutation(hidden_states)
+                # compute_scan_permutation returns tensor on same device as hidden_states
+                self._permutation = compute_scan_permutation(hidden_states)
                 self.is_initialized = True
                 return True
             return False
@@ -186,19 +208,22 @@ class VariableScanOptimizer:
             self.step_count += 1
             
             if self.step_count % self.update_frequency == 0:
-                self.current_permutation = compute_scan_permutation(hidden_states)
+                # compute_scan_permutation returns tensor on same device as hidden_states
+                self._permutation = compute_scan_permutation(hidden_states)
                 return True
             
             return False
     
     def get_permutation(self) -> torch.Tensor:
-        """Get current scan permutation."""
-        return self.current_permutation
+        """Get current scan permutation, ensuring it's on the correct device."""
+        # Always return tensor on the current device
+        return self._permutation.to(self.device)
 
     def get_inverse_permutation(self) -> torch.Tensor:
         """Get inverse of the current scan permutation."""
-        inverse = torch.empty_like(self.current_permutation, device=self.current_permutation.device)
-        inverse[self.current_permutation] = torch.arange(
-            self.d_model, device=self.current_permutation.device, dtype=self.current_permutation.dtype
+        perm = self.get_permutation()  # Always get tensor on correct device
+        inverse = torch.empty_like(perm, device=perm.device)
+        inverse[perm] = torch.arange(
+            self.d_model, device=perm.device, dtype=perm.dtype
         )
         return inverse

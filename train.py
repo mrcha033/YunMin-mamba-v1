@@ -244,14 +244,17 @@ class PEFTManager:
         
         # Step 4: Apply IA³ to mid-importance layers (Parameter Efficiency)
         params_before = set(model.parameters())
-        if ia3_layers:
-            logging.info(f"🔧 Applying IA³ to {len(ia3_layers)} mid-importance layers...")
-            insert_ia3_modules(model, target_module_names=ia3_layers)
-            logging.info("✅ IA³ application completed")
+        if ia3_layers and self.config.enable_ia3:
+            logging.info(f"[PEFT] Applying IA³ to {len(ia3_layers)} mid-importance layers...")
+            try:
+                insert_ia3_modules(model, target_module_names=ia3_layers)
+                logging.info("[PEFT] IA³ application completed")
+            except Exception as e:
+                logging.warning(f"Failed to apply IA³: {e}. Continuing with LoRA only.")
         
         # Step 5: Apply LoRA to high-importance layers (Maximum Expressiveness)
         if lora_layers:
-            logging.info(f"🔧 Applying LoRA to {len(lora_layers)} high-importance layers...")
+            logging.info(f"[PEFT] Applying LoRA to {len(lora_layers)} high-importance layers...")
             
             # Convert full module names to target module types for peft library
             target_module_types = set()
@@ -265,18 +268,21 @@ class PEFTManager:
                 # Add other module types as needed
             
             if target_module_types:
-                lora_config = LoraConfig(
-                    r=self.config.peft_r,
-                    lora_alpha=self.config.peft_alpha,
-                    lora_dropout=self.config.peft_dropout,
-                    target_modules=list(target_module_types),
-                    bias="none",
-                    task_type=TaskType.CAUSAL_LM,
-                )
-                model = get_peft_model(model, lora_config)
-                logging.info("✅ LoRA application completed")
+                try:
+                    lora_config = LoraConfig(
+                        r=self.config.peft_r,
+                        lora_alpha=self.config.peft_alpha,
+                        lora_dropout=self.config.peft_dropout,
+                        target_modules=list(target_module_types),
+                        bias="none",
+                        task_type=TaskType.CAUSAL_LM,
+                    )
+                    model = get_peft_model(model, lora_config)
+                    logging.info("[PEFT] LoRA application completed")
+                except Exception as e:
+                    logging.warning(f"Failed to apply LoRA: {e}")
             else:
-                logging.warning("⚠️ No compatible modules found for LoRA application")
+                logging.warning("[PEFT] No compatible modules found for LoRA application")
         
         # Step 6: Calculate and report efficiency gains
         params_after = set(model.parameters())
@@ -506,9 +512,12 @@ class AdaptiveMambaTrainer:
         if self.global_step == self.config.warmup_steps and not self.peft_manager.peft_applied:
             self.model, new_peft_params = self.peft_manager.apply_peft_to_model(self.model)
             if new_peft_params:
-                # Add only the new PEFT parameters to the existing optimizer
-                self.optimizer.add_param_group({"params": new_peft_params})
-                logging.info("Added PEFT parameter group to existing optimizer.")
+                # Re-create optimizer and scheduler for PEFT-applied model
+                logging.info("Re-creating optimizer and scheduler for PEFT-applied model.")
+                trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+                self.optimizer = optim.AdamW(trainable_params, lr=self.config.learning_rate)
+                self.scheduler = self._create_scheduler()  # Scheduler also needs to be recreated
+                logging.info(f"New optimizer manages {len(trainable_params)} trainable parameters.")
         
         self.global_step += 1
         return metrics

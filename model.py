@@ -441,6 +441,23 @@ class AdaptiveMambaBlock(nn.Module):
     def get_scan_permutation(self) -> torch.Tensor:
         """Get current scan permutation."""
         return self.scan_optimizer.get_permutation()
+    
+    def to(self, device):
+        """Override to() to also move scan_optimizer."""
+        # Call parent to() method first
+        result = super().to(device)
+        
+        # Move scan_optimizer to the same device
+        if hasattr(self, 'scan_optimizer'):
+            self.scan_optimizer.to(device)
+            # Verify device move was successful
+            actual_device = self.scan_optimizer.device
+            if isinstance(device, str):
+                device = torch.device(device)
+            if actual_device != device:
+                print(f"Warning: scan_optimizer device mismatch. Expected: {device}, Actual: {actual_device}")
+        
+        return result
 
 class AdaptiveMambaModel(nn.Module):
     """
@@ -555,3 +572,15 @@ class AdaptiveMambaModel(nn.Module):
         for block in self.blocks:
             total_loss += block.get_sparsity_loss()
         return total_loss
+    
+    def to(self, device):
+        """Override to() to also move scan_optimizers in all blocks."""
+        # Call parent to() method
+        result = super().to(device)
+        
+        # Move scan_optimizers in all blocks to the same device
+        for block in self.blocks:
+            if hasattr(block, 'scan_optimizer'):
+                block.scan_optimizer.to(device)
+        
+        return result

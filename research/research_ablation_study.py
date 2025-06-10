@@ -421,6 +421,22 @@ class ResearchAblationStudy:
         layer_contributions = self._analyze_layer_contributions(trainer.model)
         masking_stats = self._collect_masking_statistics(trainer.model)
         
+        # Ensure all dictionary values are serializable and safe
+        safe_layer_contributions = {}
+        for k, v in layer_contributions.items():
+            if isinstance(k, str) and isinstance(v, dict):
+                safe_layer_contributions[k] = v
+            else:
+                logging.warning(f"Invalid layer contribution entry: {type(k)} -> {type(v)}")
+                safe_layer_contributions[str(k)] = dict(v) if hasattr(v, 'items') else {'value': str(v)}
+        
+        safe_masking_stats = {}
+        for k, v in masking_stats.items():
+            if isinstance(k, str):
+                safe_masking_stats[k] = v
+            else:
+                safe_masking_stats[str(k)] = v
+        
         # Create result
         result = ExperimentResult(
             experiment_name=experiment_name,
@@ -429,7 +445,7 @@ class ResearchAblationStudy:
             final_loss=trainer.best_loss if hasattr(trainer, 'best_loss') else 0.0,
             final_perplexity=perplexity,
             parameter_reduction=(initial_params - final_trainable) / initial_params * 100,
-            average_sparsity=masking_stats.get('average_sparsity', 0.0),
+            average_sparsity=safe_masking_stats.get('average_sparsity', 0.0),
             task_metrics=task_metrics,
             total_flops=total_flops,
             peak_memory_mb=peak_memory,
@@ -438,8 +454,8 @@ class ResearchAblationStudy:
             initial_params=initial_params,
             final_trainable_params=final_trainable,
             final_total_params=final_total,
-            layer_contributions=layer_contributions,
-            masking_statistics=masking_stats
+            layer_contributions=safe_layer_contributions,
+            masking_statistics=safe_masking_stats
         )
         
         # Log to wandb
@@ -580,12 +596,20 @@ class ResearchAblationStudy:
             else:
                 block_contribution['sparsity'] = 0.0
             
-            # Ensure the key is a string before assignment
+            # Ensure the key is a string and the value is serializable
             if isinstance(block_name, str):
-                contributions[block_name] = block_contribution
+                # Convert block_contribution to ensure all values are JSON-serializable
+                safe_contribution = {}
+                for k, v in block_contribution.items():
+                    if isinstance(k, str) and isinstance(v, (int, float, bool, type(None))):
+                        safe_contribution[k] = v
+                    else:
+                        safe_contribution[str(k)] = float(v) if isinstance(v, (int, float)) else str(v)
+                contributions[block_name] = safe_contribution
             else:
                 # This should not happen, but as a safeguard
-                contributions[str(block_name)] = block_contribution
+                logging.warning(f"Non-string block name encountered: {type(block_name)} = {block_name}")
+                contributions[f"block_{i}"] = block_contribution
         
         return contributions
     

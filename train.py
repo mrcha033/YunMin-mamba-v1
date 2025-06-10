@@ -351,23 +351,26 @@ class AdaptiveMambaTrainer:
     
     def _create_model(self) -> AdaptiveMambaModel:
         """Create the Adaptive Mamba model with proper configuration."""
-        # This uses the new AdaptiveMambaConfig from model.py for cleaner setup
-        model_config = AdaptiveMambaConfig(
+        block_config = {
+            'd_state': self.config.d_state,
+            'd_conv': self.config.d_conv,
+            'expand': self.config.expand,
+            'enable_masking': self.config.enable_masking,
+            'masking_config': {
+                'tau': self.config.masking_tau,
+                'init_sparsity': self.config.masking_init_sparsity,
+                'target_sparsity': self.config.masking_target_sparsity,
+                'sparsity_weight': self.config.sparsity_weight
+            },
+            'scan_update_frequency': self.config.scan_update_frequency,
+        }
+        
+        return AdaptiveMambaModel(
             vocab_size=self.config.vocab_size,
             d_model=self.config.d_model,
             n_layers=self.config.n_layers,
-            d_state=self.config.d_state,
-            d_conv=self.config.d_conv,
-            expand=self.config.expand,
-            enable_masking=self.config.enable_masking,
-            masking_tau=self.config.masking_tau,
-            masking_init_sparsity=self.config.masking_init_sparsity,
-            masking_target_sparsity=self.config.masking_target_sparsity,
-            sparsity_weight=self.config.sparsity_weight,
-            scan_update_frequency=self.config.scan_update_frequency,
+            block_config=block_config
         )
-        
-        return AdaptiveMambaModel(config=model_config)
 
     def _create_optimizer(self) -> optim.Optimizer:
         """Create optimizer for only the trainable parameters."""

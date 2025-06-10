@@ -8,6 +8,20 @@ Based on Research Hypothesis:
 achieving non-linear efficiency improvements in the Accuracy-FLOPs-Params trade-off space."
 """
 
+# ### FIX ### Add project root to Python path to ensure proper module imports
+import os
+import sys
+from pathlib import Path
+
+# Add the project root directory to Python path
+current_file = Path(__file__).resolve()
+project_root = current_file.parent.parent  # Go up from research/ to project root
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
+print(f"[PATH] Added project root to sys.path: {project_root}")
+print(f"[PATH] Current sys.path: {sys.path[:3]}...")  # Show first 3 entries
+
 # ### FIX ### Multiprocessing safety measures to prevent infinite run creation
 import torch
 try:
@@ -16,8 +30,6 @@ try:
 except RuntimeError:
     pass  # Method already set
 
-import os
-import sys
 import tempfile
 import atexit
 
@@ -142,13 +154,17 @@ try:
 except ImportError:
     PTFLOPS_AVAILABLE = False
 
-# Mock dependencies for environments where they aren't installed
+# Import real project modules or fall back to mock implementations
 try:
     from train import AdaptiveMambaTrainer, TrainingConfig, SimpleDataset
     from research.research_datasets import DatasetFactory
     from research.research_evaluate import MultiTaskEvaluator, evaluate_model_on_task
-except ImportError:
-    print("Warning: Could not import project modules. Using placeholder classes.")
+    print("[IMPORT] ✅ Successfully imported real project modules")
+    USING_REAL_MODULES = True
+except ImportError as e:
+    print(f"[IMPORT] ❌ Could not import project modules: {e}")
+    print("[IMPORT] 🔄 Using placeholder/mock classes for testing")
+    USING_REAL_MODULES = False
     # Define placeholder classes if the main modules are not available
     class TrainingConfig:
         def __init__(self, **kwargs):
@@ -178,16 +194,65 @@ except ImportError:
                 torch.nn.ReLU(),
                 torch.nn.Linear(d_model, vocab_size)
             )
-            self.best_loss = 2.5  # Realistic starting loss for language modeling
+            
+            # Simulate realistic performance based on pillar configuration
             self.config = config
+            
+            # Base loss varies by model size and configuration
+            base_loss = 4.0 + (d_model / 256.0)  # Larger models start with higher loss
+            
+            # Apply pillar-specific improvements (simulate real effects)
+            if getattr(config, 'enable_masking', False):
+                base_loss *= 0.85  # Masking improves efficiency
+            if getattr(config, 'enable_peft', False):
+                base_loss *= 0.90  # PEFT helps but less than masking
+            if getattr(config, 'scan_update_frequency', float('inf')) != float('inf'):
+                base_loss *= 0.95  # Variable scan provides modest improvement
+                
+            # Combined effects (simulate synergy)
+            pillar_count = sum([
+                getattr(config, 'enable_masking', False),
+                getattr(config, 'enable_peft', False),
+                getattr(config, 'scan_update_frequency', float('inf')) != float('inf')
+            ])
+            
+            if pillar_count >= 2:
+                # Synergy bonus for multiple pillars
+                synergy_bonus = 0.95 ** (pillar_count - 1)
+                base_loss *= synergy_bonus
+                
+            # Add some randomness for realism but keep it deterministic
+            import hashlib
+            seed_str = f"{getattr(config, 'run_name', 'default')}_{d_model}_{getattr(config, 'peft_r', 8)}"
+            seed = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16) % 1000
+            torch.manual_seed(seed)
+            noise_factor = 0.9 + 0.2 * torch.rand(1).item()  # ±10% variation
+            
+            self.best_loss = base_loss * noise_factor
+            
         def train(self, train_dataset, eval_dataset, *args, **kwargs): 
             # Simulate realistic training with decreasing loss
             import random
             time.sleep(0.2)  # Simulate training time
+            
+            # Use config-based seed for reproducible "training"
+            seed_str = f"{getattr(self.config, 'run_name', 'default')}_train"
+            seed = int(hashlib.md5(seed_str.encode()).hexdigest()[:8], 16) % 1000
+            random.seed(seed)
+            
             # Simulate loss improvement over "epochs"
             epochs = getattr(self.config, 'num_epochs', 3)
             for epoch in range(epochs):
-                self.best_loss *= (0.9 + random.random() * 0.1)  # Gradual improvement
+                # Better configurations converge faster
+                improvement_rate = 0.85 + random.random() * 0.1
+                
+                # Pillar-specific convergence characteristics
+                if getattr(self.config, 'enable_masking', False):
+                    improvement_rate *= 0.95  # Masking helps convergence
+                if getattr(self.config, 'enable_peft', False):
+                    improvement_rate *= 0.98  # PEFT provides stable training
+                    
+                self.best_loss *= improvement_rate
                 time.sleep(0.05)
     class DatasetFactory:
         @staticmethod
@@ -196,14 +261,44 @@ except ImportError:
             print(f"Warning: Using fallback SimpleDataset for {task} {split}")
             return SimpleDataset(num_samples=num_samples)
     def evaluate_model_on_task(model, dataloader, task, *args, **kwargs): 
-        # Return more realistic fallback metrics based on task
-        base_metrics = {
-            "language_modeling": {"perplexity": 15.0 + torch.rand(1).item() * 10},
-            "summarization": {"rouge1_fmeasure": 0.3 + torch.rand(1).item() * 0.4},
-            "question_answering": {"f1": 0.4 + torch.rand(1).item() * 0.3},
-            "code_generation": {"pass_at_1": 0.2 + torch.rand(1).item() * 0.3}
-        }
-        return base_metrics.get(task, {"fallback_metric": torch.rand(1).item()})
+        # Return more realistic fallback metrics based on model characteristics
+        import hashlib
+        
+        # Extract model info for deterministic but varied results
+        total_params = sum(p.numel() for p in model.parameters())
+        model_str = f"{total_params}_{task}"
+        seed = int(hashlib.md5(model_str.encode()).hexdigest()[:8], 16) % 1000
+        torch.manual_seed(seed)
+        
+        # Simulate task-specific performance with realistic ranges
+        if task == "language_modeling":
+            # Perplexity varies based on model complexity
+            base_ppl = 10.0 + (total_params / 1000000) * 2.0  # Larger models can be better
+            variation = 5.0 * torch.rand(1).item()
+            return {"perplexity": base_ppl + variation}
+        elif task == "summarization":
+            # ROUGE scores for summarization
+            base_rouge = 0.25 + (total_params / 10000000) * 0.15
+            base_rouge = min(base_rouge, 0.65)  # Cap at reasonable value
+            variation = 0.1 * torch.rand(1).item()
+            return {"rouge1_fmeasure": base_rouge + variation}
+        elif task == "question_answering":
+            # F1 scores for QA
+            base_f1 = 0.35 + (total_params / 10000000) * 0.2
+            base_f1 = min(base_f1, 0.75)
+            variation = 0.1 * torch.rand(1).item()
+            return {"f1": base_f1 + variation}
+        elif task == "code_generation":
+            # Pass@1 for code generation
+            base_pass = 0.15 + (total_params / 20000000) * 0.25
+            base_pass = min(base_pass, 0.55)
+            variation = 0.05 * torch.rand(1).item()
+            return {"pass_at_1": base_pass + variation}
+        else:
+            # Fallback metric
+            base_metric = 0.4 + (total_params / 10000000) * 0.2
+            variation = 0.1 * torch.rand(1).item()
+            return {"fallback_metric": base_metric + variation}
 
 
 @dataclass
@@ -876,6 +971,42 @@ def main():
         config.d_models = [64, 128]
         config.lora_ranks = [4, 8]
         config.mask_temperatures = [0.3, 0.7]
+    # Full research mode uses all default hyperparameter grids for comprehensive study
+    
+    # Display research configuration info
+    total_experiments = len(config.d_models) * 8 * len(config.get_experiment_grid())  # 8 pillar combinations
+    estimated_time = total_experiments * 0.5  # Very rough estimate in hours
+    
+    print(f"\n{'='*60}")
+    print(f"🔬 ADAPTIVE MAMBA RESEARCH STUDY - {args.mode.upper()} MODE")
+    print(f"{'='*60}")
+    print(f"📊 Total Experiments: {total_experiments}")
+    print(f"⏱️  Estimated Duration: {estimated_time:.1f}+ hours")
+    print(f"🎯 Using {'REAL' if USING_REAL_MODULES else 'MOCK'} training modules")
+    print(f"📈 Samples per experiment: {config.base_samples:,} train, {config.eval_samples:,} eval")
+    print(f"🔄 Epochs per experiment: {config.base_epochs}")
+    print(f"📂 Output directory: research_ablation_{config.mode}_[timestamp]")
+    
+    # Hardware optimization info
+    if torch.cuda.is_available():
+        gpu_name = torch.cuda.get_device_name(0)
+        gpu_memory = torch.cuda.get_device_properties(0).total_memory / 1e9
+        print(f"🚀 GPU Available: {gpu_name} ({gpu_memory:.1f}GB)")
+    else:
+        print(f"⚠️  CPU-only mode (GPU recommended for faster training)")
+    
+    if args.mode == "research":
+        print(f"\n⚠️  WARNING: Full research mode will run {total_experiments} experiments!")
+        print(f"   This is computationally intensive and may take many hours.")
+        print(f"   Consider using 'quick_research' or 'pilot' mode for testing.")
+        
+    if not USING_REAL_MODULES:
+        print(f"\n❌ CRITICAL: Running with MOCK modules - results will be meaningless!")
+        print(f"   Fix import path issues to use real training.")
+    else:
+        print(f"\n✅ Ready for production research with real training and evaluation.")
+    
+    print(f"{'='*60}\n")
     
     study = ResearchAblationStudy(config)
     study.run_comprehensive_study()

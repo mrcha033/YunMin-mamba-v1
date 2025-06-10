@@ -15,6 +15,83 @@ try:
 except RuntimeError:
     pass  # Method already set
 
+import os
+import sys
+import tempfile
+import atexit
+
+# ### FIX ### Add process-level execution lock to prevent duplicate runs
+_LOCK_FILE = None
+_IS_MAIN_PROCESS = False
+
+def acquire_execution_lock():
+    """Acquire a file lock to ensure only one instance runs."""
+    global _LOCK_FILE, _IS_MAIN_PROCESS
+    
+    if _IS_MAIN_PROCESS:
+        return True
+        
+    lock_path = os.path.join(tempfile.gettempdir(), 'adaptive_mamba_research.lock')
+    
+    try:
+        # Try to create an exclusive lock file
+        if os.name == 'nt':  # Windows
+            try:
+                _LOCK_FILE = open(lock_path, 'w')
+                _LOCK_FILE.write(f"{os.getpid()}\n")
+                _LOCK_FILE.flush()
+                _IS_MAIN_PROCESS = True
+                atexit.register(release_execution_lock)
+                return True
+            except IOError:
+                return False
+        else:  # Unix/Linux
+            import fcntl
+            _LOCK_FILE = open(lock_path, 'w')
+            fcntl.flock(_LOCK_FILE.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _LOCK_FILE.write(f"{os.getpid()}\n")
+            _LOCK_FILE.flush()
+            _IS_MAIN_PROCESS = True
+            atexit.register(release_execution_lock)
+            return True
+            
+    except (IOError, OSError, ImportError):
+        if _LOCK_FILE:
+            _LOCK_FILE.close()
+        return False
+
+def release_execution_lock():
+    """Release the execution lock."""
+    global _LOCK_FILE, _IS_MAIN_PROCESS
+    
+    if _LOCK_FILE:
+        try:
+            if os.name != 'nt':  # Unix/Linux
+                import fcntl
+                fcntl.flock(_LOCK_FILE.fileno(), fcntl.LOCK_UN)
+            _LOCK_FILE.close()
+        except:
+            pass
+        _LOCK_FILE = None
+    _IS_MAIN_PROCESS = False
+    
+    # ### FIX ### Clear environment variable
+    os.environ.pop('ADAPTIVE_MAMBA_RUNNING', None)
+
+# ### FIX ### Additional environment variable protection
+# Check if we're already running
+if os.environ.get('ADAPTIVE_MAMBA_RUNNING'):
+    print("Process already running (detected via environment variable). Exiting...")
+    sys.exit(0)
+
+# Only proceed if we can acquire the lock
+if not acquire_execution_lock():
+    print("Another instance is already running (file lock detected). Exiting...")
+    sys.exit(0)
+
+# Mark this process as running
+os.environ['ADAPTIVE_MAMBA_RUNNING'] = '1'
+
 import wandb
 import numpy as np
 import matplotlib.pyplot as plt
@@ -307,6 +384,12 @@ class ResearchAblationStudy:
         5. Manual estimation - fallback
         """
         model.eval()
+        
+        # ### FIX ### Ensure model and input are on the same device
+        model_device = next(model.parameters()).device
+        if input_tensor.device != model_device:
+            logging.warning(f"Input tensor device ({input_tensor.device}) != model device ({model_device}). Moving input to model device.")
+            input_tensor = input_tensor.to(model_device)
         
         # Memory measurement
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
@@ -610,8 +693,9 @@ class ResearchAblationStudy:
         final_trainable = sum(p.numel() for p in trainer.model.parameters() if p.requires_grad)
         final_total = sum(p.numel() for p in trainer.model.parameters())
         
-        # Create sample input for profiling
-        sample_input = torch.randint(0, config.vocab_size, (1, config.max_seq_length))
+        # Create sample input for profiling - ensure it's on the same device as the model
+        device = next(trainer.model.parameters()).device
+        sample_input = torch.randint(0, config.vocab_size, (1, config.max_seq_length), device=device)
         
         # Measure efficiency metrics
         total_flops, peak_memory = self.measure_flops_and_memory(trainer.model, sample_input)

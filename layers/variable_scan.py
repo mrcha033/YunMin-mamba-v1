@@ -90,8 +90,11 @@ def compute_scan_permutation(hidden_states: torch.Tensor,
         cost_fn: Optional custom cost function
     
     Returns:
-        Optimal permutation tensor
+        Optimal permutation tensor (on the same device as input)
     """
+    # ### FIX ### Ensure all computations happen on the same device as input
+    device = hidden_states.device
+    
     # Step 1: Compute correlation matrix Σ
     correlation_matrix = compute_correlation_matrix(hidden_states)
     
@@ -103,6 +106,10 @@ def compute_scan_permutation(hidden_states: torch.Tensor,
     
     # Step 3: Solve TSP using nearest neighbor heuristic
     optimal_permutation = nearest_neighbor_tsp(cost_matrix)
+    
+    # ### FIX ### Ensure the result is on the correct device
+    if optimal_permutation.device != device:
+        optimal_permutation = optimal_permutation.to(device)
     
     return optimal_permutation
 
@@ -118,6 +125,10 @@ def apply_permutation(x: torch.Tensor, pi: torch.Tensor) -> torch.Tensor:
     Returns:
         Permuted tensor of shape (B, L, D)
     """
+    # ### FIX ### Ensure permutation tensor is on the same device as input
+    if pi.device != x.device:
+        pi = pi.to(x.device)
+    
     return x[:, :, pi]
 
 def invert_permutation(x: torch.Tensor, pi: torch.Tensor) -> torch.Tensor:
@@ -131,9 +142,13 @@ def invert_permutation(x: torch.Tensor, pi: torch.Tensor) -> torch.Tensor:
     Returns:
         Tensor restored to original order
     """
+    # ### FIX ### Ensure permutation tensor is on the same device as input
+    if pi.device != x.device:
+        pi = pi.to(x.device)
+    
     # Compute inverse permutation
-    pi_inv = torch.zeros_like(pi, device=pi.device)
-    pi_inv[pi] = torch.arange(len(pi), device=pi.device, dtype=pi.dtype)
+    pi_inv = torch.zeros_like(pi, device=x.device)  # Use x.device for consistency
+    pi_inv[pi] = torch.arange(len(pi), device=x.device, dtype=pi.dtype)
     
     return x[:, :, pi_inv]
 
@@ -199,6 +214,8 @@ class VariableScanOptimizer:
             if not self.is_initialized:
                 # compute_scan_permutation returns tensor on same device as hidden_states
                 self._permutation = compute_scan_permutation(hidden_states)
+                # ### FIX ### Update internal device tracking
+                self.device = self._permutation.device
                 self.is_initialized = True
                 return True
             return False
@@ -210,6 +227,8 @@ class VariableScanOptimizer:
             if self.step_count % self.update_frequency == 0:
                 # compute_scan_permutation returns tensor on same device as hidden_states
                 self._permutation = compute_scan_permutation(hidden_states)
+                # ### FIX ### Update internal device tracking
+                self.device = self._permutation.device
                 return True
             
             return False

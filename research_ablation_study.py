@@ -441,7 +441,11 @@ class ResearchAblationStudy:
         return configs.get(pillar_name, configs["baseline"])
     
     def _analyze_layer_contributions(self, model: torch.nn.Module) -> Dict[str, float]:
-        """Analyze contribution of each layer to overall performance."""
+        """Analyze contribution of each layer to overall performance.
+
+        LoRA parameter counts include parameters from any associated dropout
+        modules when present.
+        """
         contributions = {}
         
         if hasattr(model, 'blocks'):
@@ -476,8 +480,10 @@ class ResearchAblationStudy:
                     if hasattr(in_proj, 'lora_A') and hasattr(in_proj, 'lora_B'):
                         lora_params += in_proj.lora_A.numel() + in_proj.lora_B.numel()
                     if hasattr(in_proj, 'lora_dropout'):
-                        # Additional LoRA components
-                        pass
+                        # Account for parameters of any LoRA dropout modules
+                        lora_params += sum(
+                            p.numel() for p in in_proj.lora_dropout.parameters()
+                        )
                 
                 block_contribution['lora_params'] = lora_params
                 block_contribution['lora_ratio'] = lora_params / layer_params if layer_params > 0 else 0

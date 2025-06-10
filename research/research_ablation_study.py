@@ -7,7 +7,14 @@ Based on Research Hypothesis:
 achieving non-linear efficiency improvements in the Accuracy-FLOPs-Params trade-off space."
 """
 
+# ### FIX ### Multiprocessing safety measures to prevent infinite run creation
 import torch
+try:
+    # Set torch multiprocessing to use spawn method for safety (prevents subprocess imports)
+    torch.multiprocessing.set_start_method('spawn', force=True)
+except RuntimeError:
+    pass  # Method already set
+
 import wandb
 import numpy as np
 import matplotlib.pyplot as plt
@@ -22,6 +29,26 @@ import time
 from itertools import product
 import pandas as pd
 from torch.profiler import profile, ProfilerActivity
+
+# Alternative FLOPS measurement libraries (safer than torch.profiler)
+try:
+    import fvcore.nn
+    from fvcore.nn import FlopCountMode, flop_count_table
+    FVCORE_AVAILABLE = True
+except ImportError:
+    FVCORE_AVAILABLE = False
+
+try:
+    import thop
+    THOP_AVAILABLE = True
+except ImportError:
+    THOP_AVAILABLE = False
+
+try:
+    import ptflops
+    PTFLOPS_AVAILABLE = True
+except ImportError:
+    PTFLOPS_AVAILABLE = False
 
 import sys
 import os
@@ -54,7 +81,7 @@ class ResearchConfig:
     mode: str = "research"  # research, quick_research, pilot
     enable_grid_search: bool = True
     enable_visualization: bool = True
-    enable_profiling: bool = True
+    enable_profiling: bool = False  # ### FIX ### Disable by default to prevent subprocess issues
     
     # Task configuration
     tasks: List[str] = field(default_factory=lambda: ["language_modeling"])
@@ -269,27 +296,113 @@ class ResearchAblationStudy:
     
     def measure_flops_and_memory(self, model: torch.nn.Module, 
                                  input_tensor: torch.Tensor) -> Tuple[int, float]:
-        """Measure FLOPs and peak memory usage."""
+        """
+        Measure FLOPs and peak memory usage using multiple methods for accuracy.
+        
+        Priority order:
+        1. fvcore (Facebook's library) - most reliable
+        2. thop (Thinking in PyTorch) - widely used
+        3. ptflops - PyTorch FLOPS counter
+        4. torch.profiler - last resort (may cause subprocess issues)
+        5. Manual estimation - fallback
+        """
         model.eval()
         
         # Memory measurement
         torch.cuda.empty_cache() if torch.cuda.is_available() else None
         initial_memory = torch.cuda.memory_allocated() if torch.cuda.is_available() else 0
         
-        # FLOPs measurement using profiler
-        with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
-                    record_shapes=True) as prof:
+        # FLOPS measurement - try multiple methods for reliability
+        total_flops = 0
+        flops_method = "unknown"
+        
+        # Method 1: fvcore (Facebook's FlopCountMode) - Most accurate and stable
+        if FVCORE_AVAILABLE:
+            try:
+                flop_count_mode = FlopCountMode(model)
+                with flop_count_mode:
+                    with torch.no_grad():
+                        _ = model(input_tensor)
+                
+                total_flops = sum(flop_count_mode.flop_counts.values())
+                flops_method = "fvcore"
+                logging.debug(f"FLOPS measured using fvcore: {total_flops:,}")
+                
+            except Exception as e:
+                logging.warning(f"fvcore FLOPS measurement failed: {e}")
+        
+        # Method 2: thop (Thinking in PyTorch) - Backup method
+        if total_flops == 0 and THOP_AVAILABLE:
+            try:
+                # thop requires input shape, not tensor
+                input_shape = tuple(input_tensor.shape)
+                flops, params = thop.profile(model, inputs=(input_tensor,), verbose=False)
+                total_flops = int(flops)
+                flops_method = "thop"
+                logging.debug(f"FLOPS measured using thop: {total_flops:,}")
+                
+            except Exception as e:
+                logging.warning(f"thop FLOPS measurement failed: {e}")
+        
+        # Method 3: ptflops - Another backup method
+        if total_flops == 0 and PTFLOPS_AVAILABLE:
+            try:
+                from ptflops import get_model_complexity_info
+                # ptflops expects input shape without batch dimension
+                input_shape = input_tensor.shape[1:]  # Remove batch dimension
+                macs, params = get_model_complexity_info(
+                    model, input_shape, print_per_layer_stat=False, as_strings=False
+                )
+                total_flops = int(macs * 2)  # MACs to FLOPs conversion
+                flops_method = "ptflops"
+                logging.debug(f"FLOPS measured using ptflops: {total_flops:,}")
+                
+            except Exception as e:
+                logging.warning(f"ptflops FLOPS measurement failed: {e}")
+        
+        # Method 4: torch.profiler - Use only if specifically enabled and others failed
+        if total_flops == 0 and self.config.enable_profiling:
+            try:
+                logging.warning("Using torch.profiler - may cause subprocess issues")
+                with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+                            record_shapes=True, with_stack=False) as prof:
+                    with torch.no_grad():
+                        _ = model(input_tensor)
+                
+                # Estimate FLOPs from profiler events
+                for event in prof.events():
+                    if hasattr(event, 'flop'):
+                        total_flops += event.flop
+                
+                if total_flops > 0:
+                    flops_method = "torch.profiler"
+                    logging.debug(f"FLOPS measured using torch.profiler: {total_flops:,}")
+                
+            except Exception as e:
+                logging.warning(f"torch.profiler FLOPS measurement failed: {e}")
+        
+        # Method 5: Manual estimation - Last resort
+        if total_flops == 0:
+            logging.warning("All FLOPS measurement methods failed, using manual estimation")
             with torch.no_grad():
                 _ = model(input_tensor)
+            
+            # Manual estimation based on model architecture
+            total_params = sum(p.numel() for p in model.parameters())
+            seq_length = input_tensor.shape[1] if len(input_tensor.shape) > 1 else 1
+            batch_size = input_tensor.shape[0]
+            
+            # Rough estimation: 2 FLOPs per parameter per token (forward pass)
+            total_flops = total_params * seq_length * batch_size * 2
+            flops_method = "manual_estimation"
+            logging.warning(f"FLOPS estimated manually: {total_flops:,}")
         
+        # Memory measurement
         peak_memory = torch.cuda.max_memory_allocated() if torch.cuda.is_available() else 0
         peak_memory_mb = (peak_memory - initial_memory) / (1024 * 1024)
         
-        # Estimate FLOPs from profiler events
-        total_flops = 0
-        for event in prof.events():
-            if hasattr(event, 'flop'):
-                total_flops += event.flop
+        # Log the method used for transparency
+        logging.info(f"FLOPS measurement method: {flops_method}, Value: {total_flops:,}")
         
         return int(total_flops), float(peak_memory_mb)
     
@@ -754,29 +867,43 @@ class ResearchAblationStudy:
                     hyperparams = base_hyperparams.copy()
                     hyperparams['d_model'] = d_model
 
+                    # ### FIX ### Initialize wandb ONCE per experiment, BEFORE creating the trainer
+                    exp_name = f"{pillar_combo}_d{d_model}_r{hyperparams['lora_rank']}_t{str(hyperparams['mask_temperature']).replace('.', '_')}"
+                    
+                    # Start a new wandb run with multiprocessing safety
                     try:
-                        # Initialize wandb for this experiment
-                        exp_name = f"{pillar_combo}_d{d_model}_r{hyperparams['lora_rank']}_t{hyperparams['mask_temperature']}"
-                        wandb.init(
-                            project=self.config.project_name,
-                            entity=self.config.entity,
-                            name=exp_name,
-                            tags=self._generate_tags(pillar_combo, hyperparams),
-                            reinit=True
-                        )
+                        # ### FIX ### Add multiprocessing safeguards for wandb
+                        import os
+                        if os.getenv('WANDB_MODE') != 'disabled':
+                            wandb.init(
+                                project=self.config.project_name,
+                                entity=self.config.entity,
+                                name=exp_name,
+                                tags=self._generate_tags(pillar_combo, hyperparams),
+                                config=hyperparams,  # Pass hyperparams directly
+                                reinit=True,
+                                # Additional safety settings to prevent subprocess issues
+                                settings=wandb.Settings(
+                                    start_method="thread",  # Use threading instead of forking
+                                    _disable_stats=True,    # Disable system stats collection
+                                    _disable_meta=True      # Disable metadata collection
+                                )
+                            )
+                        else:
+                            logging.info("WANDB_MODE=disabled, skipping wandb initialization")
                         
-                        # Run experiment
+                        # Now, run the experiment. The trainer will detect the active wandb run.
                         result = self.run_pillar_experiment(pillar_combo, hyperparams)
                         model_size_results.append(result)
                         all_results.append(result)
                         
-                        wandb.finish()
-                        
                     except Exception as e:
-                        logging.error(f"[ERROR] Error in experiment {pillar_combo} (d_model={d_model}): {e}")
+                        logging.error(f"[ERROR] Error in experiment {exp_name}: {e}")
+                        
+                    finally:
+                        # ### FIX ### Ensure wandb run is always finished
                         if wandb.run is not None:
                             wandb.finish()
-                        continue
             
             # After completing all runs for a given d_model, generate its specific report
             logging.info(f"[ANALYSIS] Generating analysis for d_model = {d_model}")
@@ -1394,6 +1521,8 @@ def parse_args():
                        help="Disable hyperparameter grid search")
     parser.add_argument("--disable-visualization", action="store_true", 
                        help="Disable visualization generation")
+    parser.add_argument("--enable-profiling", action="store_true", 
+                       help="Enable torch profiler (may cause subprocess issues)")
     parser.add_argument("--epochs", type=int, help="Override number of epochs")
     parser.add_argument("--project", type=str, default="adaptive-mamba-research",
                        help="Wandb project name")
@@ -1411,6 +1540,7 @@ def main():
         mode=args.mode,
         enable_grid_search=not args.disable_grid_search,
         enable_visualization=not args.disable_visualization,
+        enable_profiling=args.enable_profiling,  # ### FIX ### Respect profiling setting
         project_name=args.project
     )
     
@@ -1452,6 +1582,28 @@ def main():
     except ImportError:
         print("[ERROR] wandb not available")
         return
+    
+    # Check FLOPS measurement libraries
+    flops_methods = []
+    if FVCORE_AVAILABLE:
+        flops_methods.append("fvcore")
+        print("[OK] fvcore available (recommended for FLOPS)")
+    if THOP_AVAILABLE:
+        flops_methods.append("thop")
+        print("[OK] thop available")
+    if PTFLOPS_AVAILABLE:
+        flops_methods.append("ptflops")
+        print("[OK] ptflops available")
+    
+    if not flops_methods:
+        print("[WARNING] No dedicated FLOPS measurement libraries found!")
+        print("For accurate FLOPS measurement, install one of:")
+        print("  pip install fvcore  # Recommended (Facebook's library)")
+        print("  pip install thop    # Popular alternative")
+        print("  pip install ptflops # PyTorch FLOPS counter")
+        print("Continuing with manual estimation (less accurate)...")
+    else:
+        print(f"[OK] FLOPS measurement using: {', '.join(flops_methods)}")
     
     if config.enable_visualization:
         try:

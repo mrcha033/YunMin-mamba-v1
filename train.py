@@ -323,8 +323,8 @@ class AdaptiveMambaTrainer:
         # ### FIX ### Ensure model (including new PEFT parameters) is on correct device
         self.model = self.model.to(self.device)
         
-        # Log PEFT allocation details to wandb AFTER PEFT application
-        if WANDB_AVAILABLE:
+        # Log PEFT allocation details to wandb AFTER PEFT application (only if we initialized wandb)
+        if WANDB_AVAILABLE and not getattr(self, 'external_wandb', False):
             wandb.config.update({"peft_allocation": self.peft_manager.get_allocation_summary()})
         
         # Initialize optimizer and scheduler AFTER model is potentially modified by PEFT
@@ -337,6 +337,7 @@ class AdaptiveMambaTrainer:
         logging.info(f"Trainer initialized. Device: {self.device}")
     
     def _setup_logging(self):
+        """Setup logging configuration."""
         logging.basicConfig(
             level=logging.INFO,
             format='%(asctime)s - %(levelname)s - %(message)s',
@@ -345,12 +346,22 @@ class AdaptiveMambaTrainer:
                 logging.StreamHandler()
             ]
         )
+        
+        # ### FIX ### Only initialize wandb if there is no active run
         if WANDB_AVAILABLE:
-            wandb.init(
-                project=self.config.project_name,
-                name=self.config.run_name,
-                config=asdict(self.config)
-            )
+            if wandb.run is None:
+                # No active run, so this script is responsible for init
+                self.external_wandb = False
+                wandb.init(
+                    project=self.config.project_name,
+                    name=self.config.run_name,
+                    config=asdict(self.config)
+                )
+                logging.info("Wandb initialized by trainer (standalone execution)")
+            else:
+                # An active run already exists (likely from research_ablation_study.py)
+                self.external_wandb = True
+                logging.info("Wandb is already initialized by an external script. Skipping init.")
     
     def _create_model(self) -> AdaptiveMambaModel:
         """Create the Adaptive Mamba model with proper configuration."""

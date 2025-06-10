@@ -320,6 +320,9 @@ class AdaptiveMambaTrainer:
         self.peft_manager = PEFTManager(config)
         self.model = self.peft_manager.apply_peft_to_model(self.model)
         
+        # ### FIX ### Ensure model (including new PEFT parameters) is on correct device
+        self.model = self.model.to(self.device)
+        
         # Log PEFT allocation details to wandb AFTER PEFT application
         if WANDB_AVAILABLE:
             wandb.config.update({"peft_allocation": self.peft_manager.get_allocation_summary()})

@@ -57,6 +57,10 @@ class MaskedLinear(nn.Linear):
         # Generate mask (differentiable in training, deterministic in eval)
         mask = self.mask_generator(self.training)
         
+        # ### FIX ### Ensure mask is on the same device as weights
+        if mask.device != self.weight.device:
+            mask = mask.to(self.weight.device)
+        
         # Apply mask to weights
         masked_weight = self.weight * mask
         
@@ -166,6 +170,13 @@ class MaskedLinear(nn.Linear):
         """Reset tracking statistics."""
         self.total_forward_calls.zero_()
         self.total_active_weights.zero_()
+    
+    def to(self, device):
+        """Override to() to ensure mask_generator is moved to the same device."""
+        result = super().to(device)
+        if hasattr(self, 'mask_generator'):
+            self.mask_generator = self.mask_generator.to(device)
+        return result
 
 class MaskedConv1d(nn.Conv1d):
     """
@@ -194,6 +205,11 @@ class MaskedConv1d(nn.Conv1d):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass with masked convolution weights."""
         mask = self.mask_generator(self.training)
+        
+        # ### FIX ### Ensure mask is on the same device as weights
+        if mask.device != self.weight.device:
+            mask = mask.to(self.weight.device)
+        
         masked_weight = self.weight * mask
         
         return F.conv1d(
@@ -267,6 +283,13 @@ class MaskedConv1d(nn.Conv1d):
             'importance_score': self.get_importance_score(),
             'sparsity_loss': self.get_sparsity_loss().item()
         }
+    
+    def to(self, device):
+        """Override to() to ensure mask_generator is moved to the same device."""
+        result = super().to(device)
+        if hasattr(self, 'mask_generator'):
+            self.mask_generator = self.mask_generator.to(device)
+        return result
 
 # Utility function to convert existing modules
 def convert_to_masked(module: nn.Module, masking_config: dict) -> nn.Module:

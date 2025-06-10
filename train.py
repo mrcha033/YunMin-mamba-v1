@@ -485,24 +485,41 @@ class AdaptiveMambaTrainer:
         
         logging.info("Training completed!")
 
+def parse_args():
+    """Parse command line arguments."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Training utility for YunMin Mamba")
+    parser.add_argument("--epochs", type=int, default=2, help="number of training epochs")
+    parser.add_argument("--ia3", action="store_true", help="enable IA³ scaling modules")
+    parser.add_argument("--output-dir", default="./training_outputs", help="directory to save outputs")
+    parser.add_argument("--batch-size", type=int, default=8, help="batch size for training")
+    parser.add_argument("--learning-rate", type=float, default=1e-4, help="learning rate")
+    parser.add_argument("--vocab-size", type=int, default=1000, help="vocabulary size")
+    parser.add_argument("--seq-length", type=int, default=64, help="sequence length")
+    parser.add_argument("--disable-masking", action="store_true", help="disable learned masking (Pillar 2)")
+    parser.add_argument("--disable-peft", action="store_true", help="disable PEFT (Pillar 3)")
+    return parser.parse_args()
+
 def main():
     """Main training entry point."""
+    args = parse_args()
+    
     # Configuration
     config = TrainingConfig(
-        vocab_size=1000,
+        vocab_size=args.vocab_size,
         d_model=256,
         n_layers=4,
-        batch_size=8,
-        num_epochs=2,
-        max_seq_length=64,
-        learning_rate=1e-4,
-        enable_masking=True,
-        enable_peft=PEFT_AVAILABLE,  # Enable only if PEFT is available
-        enable_ia3=False,
+        batch_size=args.batch_size,
+        num_epochs=args.epochs,
+        max_seq_length=args.seq_length,
+        learning_rate=args.learning_rate,
+        enable_masking=not args.disable_masking,
+        enable_peft=PEFT_AVAILABLE and not args.disable_peft,
+        enable_ia3=args.ia3,
         log_interval=10,
         eval_interval=50,
         save_interval=100,
-        output_dir="./training_outputs"
+        output_dir=args.output_dir
     )
     
     # Create datasets

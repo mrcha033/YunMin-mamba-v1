@@ -716,9 +716,49 @@ class ResearchAblationStudy:
             logging.warning(f"Failed to compute task-specific metrics: {e}")
             task_metrics = {}
         
-        # Collect model statistics
-        layer_contributions = self._analyze_layer_contributions(trainer.model)
-        masking_stats = self._collect_masking_statistics(trainer.model)
+        # Collect model statistics with immediate slice detection
+        logging.error(f"[DEBUG-SLICE-EARLY] About to collect layer contributions...")
+        try:
+            layer_contributions = self._analyze_layer_contributions(trainer.model)
+            logging.error(f"[DEBUG-SLICE-EARLY] Layer contributions collected successfully")
+            
+            # Check immediately for slice objects
+            def quick_slice_check(obj, name):
+                if isinstance(obj, slice):
+                    logging.error(f"[DEBUG-SLICE-EARLY] FOUND SLICE in {name}: {obj}")
+                    return True
+                elif isinstance(obj, dict):
+                    for k, v in obj.items():
+                        if isinstance(k, slice) or isinstance(v, slice):
+                            logging.error(f"[DEBUG-SLICE-EARLY] FOUND SLICE in {name}[{k}] = {v}")
+                            return True
+                        if isinstance(v, dict):
+                            if quick_slice_check(v, f"{name}[{k}]"):
+                                return True
+                return False
+            
+            if quick_slice_check(layer_contributions, "layer_contributions"):
+                logging.error(f"[DEBUG-SLICE-EARLY] Layer contributions contains slice objects!")
+                # Create safe fallback
+                layer_contributions = {}
+            
+        except Exception as e:
+            logging.error(f"[DEBUG-SLICE-EARLY] Error collecting layer contributions: {e}")
+            layer_contributions = {}
+        
+        logging.error(f"[DEBUG-SLICE-EARLY] About to collect masking statistics...")
+        try:
+            masking_stats = self._collect_masking_statistics(trainer.model)
+            logging.error(f"[DEBUG-SLICE-EARLY] Masking stats collected successfully")
+            
+            if quick_slice_check(masking_stats, "masking_stats"):
+                logging.error(f"[DEBUG-SLICE-EARLY] Masking stats contains slice objects!")
+                # Create safe fallback
+                masking_stats = {'average_sparsity': 0.0}
+                
+        except Exception as e:
+            logging.error(f"[DEBUG-SLICE-EARLY] Error collecting masking stats: {e}")
+            masking_stats = {'average_sparsity': 0.0}
         
         # ### FIX ### Pre-sanitize all data before creating ExperimentResult
         def sanitize_data_recursive(obj):

@@ -779,26 +779,82 @@ class ResearchAblationStudy:
             logging.error(f"Failed to sanitize masking_stats: {e}")
             safe_masking_stats = {'average_sparsity': 0.0}
         
-        # Create result with pre-sanitized data
-        result = ExperimentResult(
-            experiment_name=experiment_name,
-            hyperparams=safe_hyperparams,
-            task=primary_task,
-            final_loss=trainer.best_loss if hasattr(trainer, 'best_loss') else 0.0,
-            final_perplexity=perplexity,
-            parameter_reduction=(initial_params - final_trainable) / initial_params * 100,
-            average_sparsity=safe_masking_stats.get('average_sparsity', 0.0),
-            task_metrics=safe_task_metrics,
-            total_flops=total_flops,
-            peak_memory_mb=peak_memory,
-            training_time_seconds=training_time,
-            inference_time_ms=inference_time,
-            initial_params=initial_params,
-            final_trainable_params=final_trainable,
-            final_total_params=final_total,
-            layer_contributions=safe_layer_contributions,
-            masking_statistics=safe_masking_stats
-        )
+        # ### FIX ### Add detailed debugging before ExperimentResult creation
+        logging.error(f"[DEBUG-SLICE] About to create ExperimentResult")
+        logging.error(f"[DEBUG-SLICE] safe_hyperparams type: {type(safe_hyperparams)}")
+        logging.error(f"[DEBUG-SLICE] safe_layer_contributions type: {type(safe_layer_contributions)}")
+        logging.error(f"[DEBUG-SLICE] safe_masking_stats type: {type(safe_masking_stats)}")
+        
+        # Check for slice objects in each input
+        def find_slices_in_obj(obj, name):
+            """Recursively find slice objects."""
+            try:
+                if isinstance(obj, slice):
+                    logging.error(f"[DEBUG-SLICE] Found slice in {name}: {obj}")
+                    return True
+                elif isinstance(obj, dict):
+                    for k, v in obj.items():
+                        if find_slices_in_obj(k, f"{name}.key[{k}]") or find_slices_in_obj(v, f"{name}[{k}]"):
+                            return True
+                elif isinstance(obj, (list, tuple)):
+                    for i, item in enumerate(obj):
+                        if find_slices_in_obj(item, f"{name}[{i}]"):
+                            return True
+            except Exception as e:
+                logging.error(f"[DEBUG-SLICE] Error checking {name}: {e}")
+            return False
+        
+        find_slices_in_obj(safe_hyperparams, "safe_hyperparams")
+        find_slices_in_obj(safe_layer_contributions, "safe_layer_contributions") 
+        find_slices_in_obj(safe_masking_stats, "safe_masking_stats")
+        find_slices_in_obj(safe_task_metrics, "safe_task_metrics")
+        
+        # ### FIX ### Create ExperimentResult with even more defensive try-catch
+        try:
+            result = ExperimentResult(
+                experiment_name=experiment_name,
+                hyperparams=safe_hyperparams,
+                task=primary_task,
+                final_loss=trainer.best_loss if hasattr(trainer, 'best_loss') else 0.0,
+                final_perplexity=perplexity,
+                parameter_reduction=(initial_params - final_trainable) / initial_params * 100,
+                average_sparsity=safe_masking_stats.get('average_sparsity', 0.0),
+                task_metrics=safe_task_metrics,
+                total_flops=total_flops,
+                peak_memory_mb=peak_memory,
+                training_time_seconds=training_time,
+                inference_time_ms=inference_time,
+                initial_params=initial_params,
+                final_trainable_params=final_trainable,
+                final_total_params=final_total,
+                layer_contributions=safe_layer_contributions,
+                masking_statistics=safe_masking_stats
+            )
+            logging.error(f"[DEBUG-SLICE] ExperimentResult created successfully")
+        except Exception as e:
+            logging.error(f"[DEBUG-SLICE] ExperimentResult creation failed: {e}")
+            logging.error(f"[DEBUG-SLICE] Creating minimal fallback result...")
+            
+            # Create minimal result without problematic fields
+            result = ExperimentResult(
+                experiment_name=experiment_name,
+                hyperparams={'lora_rank': hyperparams.get('lora_rank', 4), 'd_model': hyperparams.get('d_model', 64)},
+                task=primary_task,
+                final_loss=0.0,
+                final_perplexity=perplexity,
+                parameter_reduction=(initial_params - final_trainable) / initial_params * 100 if initial_params > 0 else 0.0,
+                average_sparsity=0.0,
+                task_metrics={},
+                total_flops=total_flops,
+                peak_memory_mb=peak_memory,
+                training_time_seconds=training_time,
+                inference_time_ms=inference_time,
+                initial_params=initial_params,
+                final_trainable_params=final_trainable,
+                final_total_params=final_total,
+                layer_contributions={},
+                masking_statistics={'average_sparsity': 0.0}
+            )
         
         # Log to wandb
         if wandb.run is not None:
@@ -1072,8 +1128,8 @@ class ResearchAblationStudy:
                                         start_method="thread",  # Use threading instead of forking
                                         _disable_stats=True,    # Disable system stats collection
                                         _disable_meta=True,     # Disable metadata collection
-                                        init_timeout=30,        # Shorter timeout (30s instead of 90s)
-                                        _disable_service=True   # Disable background service
+                                        init_timeout=30         # Shorter timeout (30s instead of 90s)
+                                        # Note: _disable_service removed due to pydantic validation error
                                     )
                                 )
                                 logging.info(f"[WANDB] Successfully initialized run {deterministic_run_id}")

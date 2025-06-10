@@ -216,8 +216,10 @@ class VariableScanOptimizer:
     
     def get_permutation(self) -> torch.Tensor:
         """Get current scan permutation, ensuring it's on the correct device."""
-        # Always return tensor on the current device
-        return self._permutation.to(self.device)
+        # Always return tensor on the current device, with defensive check
+        if self._permutation.device != self.device:
+            self._permutation = self._permutation.to(self.device)
+        return self._permutation
 
     def get_inverse_permutation(self) -> torch.Tensor:
         """Get inverse of the current scan permutation."""

@@ -375,7 +375,10 @@ class AdaptiveMambaBlock(nn.Module):
         if update_scan:
             self.scan_optimizer.update_permutation(x)
         
-        pi = self.scan_optimizer.get_permutation().to(x.device)
+        # Ensure permutation is on the same device as input with defensive checks
+        pi = self.scan_optimizer.get_permutation()
+        if pi.device != x.device:
+            pi = pi.to(x.device)
         x_permuted = apply_permutation(x, pi)
         
         # Core computation with residual connection

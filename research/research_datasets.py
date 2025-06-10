@@ -18,7 +18,8 @@ class WikiText2Dataset(Dataset):
     """WikiText-2 dataset for language modeling evaluation."""
     
     def __init__(self, split: str = "train", max_length: int = 512, 
-                 tokenizer_name: str = "gpt2", cache_dir: Optional[str] = None):
+                 tokenizer_name: str = "gpt2", cache_dir: Optional[str] = None,
+                 num_samples: Optional[int] = None):
         self.max_length = max_length
         self.split = split
         
@@ -32,10 +33,14 @@ class WikiText2Dataset(Dataset):
         try:
             dataset = load_dataset("wikitext", "wikitext-2-raw-v1", 
                                  cache_dir=cache_dir, split=split)
+            if num_samples:
+                dataset = dataset.select(range(min(num_samples, len(dataset))))
         except Exception as e:
             logging.warning(f"Failed to load WikiText-2: {e}")
             # Fallback to local simple dataset
             dataset = self._create_fallback_dataset()
+            if num_samples:
+                dataset = dataset[:num_samples]
         
         # Process and tokenize texts
         self.examples = self._process_dataset(dataset)
@@ -260,7 +265,7 @@ class HumanEvalDataset(Dataset):
     
     def __init__(self, split: str = "test", max_length: int = 512,
                  tokenizer_name: str = "microsoft/CodeBERT-base",
-                 cache_dir: Optional[str] = None):
+                 cache_dir: Optional[str] = None, num_samples: Optional[int] = None):
         self.max_length = max_length
         self.split = split
         
@@ -273,9 +278,13 @@ class HumanEvalDataset(Dataset):
         logging.info(f"Loading HumanEval dataset...")
         try:
             dataset = load_dataset("openai_humaneval", cache_dir=cache_dir, split="test")
+            if num_samples:
+                dataset = dataset.select(range(min(num_samples, len(dataset))))
         except Exception as e:
             logging.warning(f"Failed to load HumanEval: {e}")
             dataset = self._create_fallback_dataset()
+            if num_samples:
+                dataset = dataset[:num_samples]
         
         # Process dataset
         self.examples = self._process_dataset(dataset)

@@ -723,24 +723,61 @@ class ResearchAblationStudy:
         # ### FIX ### Pre-sanitize all data before creating ExperimentResult
         def sanitize_data_recursive(obj):
             """Recursively sanitize data to prevent slice objects and other unhashable types."""
-            if isinstance(obj, slice):
-                return f"slice({obj.start},{obj.stop},{obj.step})"
-            elif isinstance(obj, float) and (obj == float('inf') or obj == float('-inf') or obj != obj):  # inf or nan
-                return 999999 if obj == float('inf') else -999999 if obj == float('-inf') else 0.0
-            elif isinstance(obj, dict):
-                return {str(k): sanitize_data_recursive(v) for k, v in obj.items()}
-            elif isinstance(obj, (list, tuple)):
-                return [sanitize_data_recursive(item) for item in obj]
-            elif isinstance(obj, (int, float, str, bool, type(None))):
-                return obj
-            else:
+            try:
+                if isinstance(obj, slice):
+                    return f"slice({obj.start},{obj.stop},{obj.step})"
+                elif isinstance(obj, float) and (obj == float('inf') or obj == float('-inf') or obj != obj):  # inf or nan
+                    return 999999 if obj == float('inf') else -999999 if obj == float('-inf') else 0.0
+                elif isinstance(obj, dict):
+                    safe_dict = {}
+                    for k, v in obj.items():
+                        safe_key = str(k) if not isinstance(k, str) else k
+                        safe_dict[safe_key] = sanitize_data_recursive(v)
+                    return safe_dict
+                elif isinstance(obj, (list, tuple)):
+                    return [sanitize_data_recursive(item) for item in obj]
+                elif isinstance(obj, (int, float, str, bool, type(None))):
+                    return obj
+                elif hasattr(obj, '__dict__'):
+                    # Handle objects with attributes by converting to string
+                    return str(obj)
+                else:
+                    return str(obj)
+            except Exception as e:
+                # Ultimate fallback - convert anything problematic to string
+                logging.warning(f"Sanitization failed for {type(obj)}: {e}")
                 return str(obj)
         
-        # Sanitize all inputs
-        safe_hyperparams = sanitize_data_recursive(hyperparams.copy())
-        safe_task_metrics = sanitize_data_recursive(task_metrics)
-        safe_layer_contributions = sanitize_data_recursive(layer_contributions)
-        safe_masking_stats = sanitize_data_recursive(masking_stats)
+        # ### FIX ### Add defensive debugging before sanitization
+        logging.debug(f"[DEBUG] Sanitizing hyperparams: {type(hyperparams)}")
+        logging.debug(f"[DEBUG] Sanitizing task_metrics: {type(task_metrics)}")
+        logging.debug(f"[DEBUG] Sanitizing layer_contributions: {type(layer_contributions)}")
+        logging.debug(f"[DEBUG] Sanitizing masking_stats: {type(masking_stats)}")
+        
+        # Sanitize all inputs with error protection
+        try:
+            safe_hyperparams = sanitize_data_recursive(hyperparams.copy())
+        except Exception as e:
+            logging.error(f"Failed to sanitize hyperparams: {e}")
+            safe_hyperparams = {str(k): str(v) for k, v in hyperparams.items()}
+            
+        try:
+            safe_task_metrics = sanitize_data_recursive(task_metrics)
+        except Exception as e:
+            logging.error(f"Failed to sanitize task_metrics: {e}")
+            safe_task_metrics = {}
+            
+        try:
+            safe_layer_contributions = sanitize_data_recursive(layer_contributions)
+        except Exception as e:
+            logging.error(f"Failed to sanitize layer_contributions: {e}")
+            safe_layer_contributions = {}
+            
+        try:
+            safe_masking_stats = sanitize_data_recursive(masking_stats)
+        except Exception as e:
+            logging.error(f"Failed to sanitize masking_stats: {e}")
+            safe_masking_stats = {'average_sparsity': 0.0}
         
         # Create result with pre-sanitized data
         result = ExperimentResult(
@@ -1020,21 +1057,31 @@ class ResearchAblationStudy:
                             run_id_source = f"{self.config.project_name}_{exp_name}_{hashlib.md5(str(sorted(hyperparams.items())).encode()).hexdigest()[:8]}"
                             deterministic_run_id = hashlib.md5(run_id_source.encode()).hexdigest()[:8]
                             
-                            wandb.init(
-                                project=self.config.project_name,
-                                entity=self.config.entity,
-                                id=deterministic_run_id,  # Fixed ID prevents duplicates
-                                name=exp_name,
-                                tags=self._generate_tags(pillar_combo, hyperparams),
-                                config=hyperparams,  # Pass hyperparams directly
-                                resume="allow",  # Allow resuming if run exists
-                                # Additional safety settings to prevent subprocess issues
-                                settings=wandb.Settings(
-                                    start_method="thread",  # Use threading instead of forking
-                                    _disable_stats=True,    # Disable system stats collection
-                                    _disable_meta=True      # Disable metadata collection
+                            # ### FIX ### Add timeout and more robust error handling
+                            try:
+                                wandb.init(
+                                    project=self.config.project_name,
+                                    entity=self.config.entity,
+                                    id=deterministic_run_id,  # Fixed ID prevents duplicates
+                                    name=exp_name,
+                                    tags=self._generate_tags(pillar_combo, hyperparams),
+                                    config=hyperparams,  # Pass hyperparams directly
+                                    resume="allow",  # Allow resuming if run exists
+                                    # Enhanced safety settings
+                                    settings=wandb.Settings(
+                                        start_method="thread",  # Use threading instead of forking
+                                        _disable_stats=True,    # Disable system stats collection
+                                        _disable_meta=True,     # Disable metadata collection
+                                        init_timeout=30,        # Shorter timeout (30s instead of 90s)
+                                        _disable_service=True   # Disable background service
+                                    )
                                 )
-                            )
+                                logging.info(f"[WANDB] Successfully initialized run {deterministic_run_id}")
+                            except Exception as wandb_error:
+                                logging.warning(f"[WANDB] Failed to initialize: {wandb_error}")
+                                logging.warning("[WANDB] Continuing without wandb logging...")
+                                # Set environment to disable wandb for this experiment
+                                os.environ['WANDB_MODE'] = 'disabled'
                         else:
                             logging.info("WANDB_MODE=disabled, skipping wandb initialization")
                         

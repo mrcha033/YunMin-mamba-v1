@@ -2,7 +2,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from research_evaluate import evaluate_model_on_task
+from research.research_evaluate import evaluate_model_on_task
 
 class DummyModel(torch.nn.Module):
     def __init__(self, vocab_size=10):

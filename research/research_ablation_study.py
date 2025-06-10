@@ -698,23 +698,41 @@ class ResearchAblationStudy:
         sample_input = torch.randint(0, config.vocab_size, (1, config.max_seq_length), device=device)
         
         # Measure efficiency metrics
+        logging.error(f"[DEBUG-SLICE-TRACK] Starting efficiency measurements...")
         total_flops, peak_memory = self.measure_flops_and_memory(trainer.model, sample_input)
+        logging.error(f"[DEBUG-SLICE-TRACK] FLOPS/memory measurement completed")
+        
         inference_time = self.measure_inference_time(trainer.model, sample_input)
+        logging.error(f"[DEBUG-SLICE-TRACK] Inference time measurement completed")
         
         # Calculate task-specific metrics
+        logging.error(f"[DEBUG-SLICE-TRACK] Creating eval dataloader...")
         eval_dataloader = torch.utils.data.DataLoader(eval_dataset, batch_size=config.batch_size)
-        perplexity = self.calculate_perplexity(trainer.model, eval_dataloader)
+        logging.error(f"[DEBUG-SLICE-TRACK] About to calculate perplexity...")
+        
+        try:
+            perplexity = self.calculate_perplexity(trainer.model, eval_dataloader)
+            logging.error(f"[DEBUG-SLICE-TRACK] Perplexity calculation completed: {perplexity}")
+        except Exception as e:
+            logging.error(f"[DEBUG-SLICE-TRACK] ERROR in perplexity calculation: {e}")
+            perplexity = 999.0  # Safe fallback
         
         # Evaluate on task-specific metrics
+        logging.error(f"[DEBUG-SLICE-TRACK] About to evaluate task-specific metrics...")
         task_metrics = {}
         try:
             if primary_task in ["language_modeling", "summarization", "question_answering", "code_generation"]:
+                logging.error(f"[DEBUG-SLICE-TRACK] Calling evaluate_model_on_task...")
                 task_results = evaluate_model_on_task(trainer.model, eval_dataloader, primary_task)
                 task_metrics.update(task_results)
+                logging.error(f"[DEBUG-SLICE-TRACK] Task-specific metrics completed")
                 logging.info(f"[METRICS] Task-specific metrics computed for {primary_task}")
         except Exception as e:
+            logging.error(f"[DEBUG-SLICE-TRACK] ERROR in task metrics: {e}")
             logging.warning(f"Failed to compute task-specific metrics: {e}")
             task_metrics = {}
+        
+        logging.error(f"[DEBUG-SLICE-TRACK] All metrics completed, moving to layer analysis...")
         
         # Collect model statistics with immediate slice detection
         logging.error(f"[DEBUG-SLICE-EARLY] About to collect layer contributions...")

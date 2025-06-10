@@ -26,16 +26,21 @@ except ImportError:
     MAMBA_AVAILABLE = False
 
 class FallbackMamba(nn.Module):
+    """Minimal recurrent SSM fallback when ``mamba_ssm`` is unavailable.
+
+    The module mimics the behaviour of the official Mamba mixer by
+    maintaining a recurrent state ``s`` with dimension ``d_state``.  At
+    each time step the state is updated according to ``s <- A @ s + B @ x``
+    where ``x`` is the projected input.  The updated state contributes to
+    the gating/output projection via an additional linear mapping.
     """
-    Simple fallback implementation when mamba_ssm is not available.
-    This is a simplified version for demonstration purposes.
-    """
-    
+
     def __init__(self, d_model: int, d_state: int = 16, d_conv: int = 4, expand: int = 2):
         super().__init__()
         self.d_model = d_model
         self.d_inner = int(expand * d_model)
-        
+        self.d_state = d_state
+
         self.in_proj = nn.Linear(d_model, self.d_inner * 2, bias=False)
         self.conv1d = nn.Conv1d(
             in_channels=self.d_inner,
@@ -46,23 +51,46 @@ class FallbackMamba(nn.Module):
             groups=self.d_inner,
         )
         self.out_proj = nn.Linear(self.d_inner, d_model, bias=False)
-        
+
+        # Parameters for the simple SSM: s <- A @ s + B @ x
+        self.A = nn.Parameter(torch.eye(d_state))
+        self.B = nn.Parameter(torch.randn(d_state, self.d_inner) * 0.01)
+        self.C = nn.Parameter(torch.randn(d_state, self.d_inner) * 0.01)
+
+        # Registered buffer so state persists across calls but is not a parameter
+        self.register_buffer("ssm_state", torch.zeros(1, d_state))
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Simplified forward pass."""
-        B, L, D = x.shape
-        
+        """Forward pass of the simplified SSM mixer."""
+        B, L, _ = x.shape
+
+        # Ensure state matches current batch size
+        if self.ssm_state.size(0) != B:
+            self.ssm_state = torch.zeros(B, self.d_state, device=x.device, dtype=x.dtype)
+
         # Project and split
         xz = self.in_proj(x)  # (B, L, 2 * d_inner)
         x_part, z = xz.chunk(2, dim=-1)  # Each: (B, L, d_inner)
-        
+
         # Apply convolution
         x_conv = self.conv1d(x_part.transpose(1, 2))[:, :, :L].transpose(1, 2)
         x_conv = F.silu(x_conv)
-        
-        # Simple gating (placeholder for SSM logic)
-        y = x_conv * F.silu(z)
-        
-        # Output projection
+
+        outputs = []
+        state = self.ssm_state
+        for t in range(L):
+            inp = x_part[:, t]
+            # Update recurrent state
+            state = torch.matmul(state, self.A.T) + torch.matmul(inp, self.B.T)
+            gate = torch.sigmoid(z[:, t])
+            state_proj = torch.matmul(state, self.C)
+            out = (x_conv[:, t] + state_proj) * gate
+            outputs.append(out.unsqueeze(1))
+
+        # Persist state for subsequent calls
+        self.ssm_state = state.detach()
+
+        y = torch.cat(outputs, dim=1)
         output = self.out_proj(y)
         return output
 

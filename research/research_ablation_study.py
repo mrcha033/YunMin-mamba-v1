@@ -1218,20 +1218,22 @@ class ResearchAblationStudy:
                         import hashlib
                         
                         if os.getenv('WANDB_MODE') != 'disabled':
-                            # ### FIX ### Generate deterministic run ID to prevent duplicates
-                            run_id_source = f"{self.config.project_name}_{exp_name}_{hashlib.md5(str(sorted(hyperparams.items())).encode()).hexdigest()[:8]}"
-                            deterministic_run_id = hashlib.md5(run_id_source.encode()).hexdigest()[:8]
+                            # ### FIX ### Generate unique run ID with timestamp to prevent resume issues
+                            import time
+                            timestamp = str(int(time.time() * 1000))[-6:]  # Last 6 digits of timestamp
+                            run_id_source = f"{exp_name}_{timestamp}_{hashlib.md5(str(sorted(hyperparams.items())).encode()).hexdigest()[:6]}"
+                            unique_run_id = hashlib.md5(run_id_source.encode()).hexdigest()[:8]
                             
                             # ### FIX ### Add timeout and more robust error handling
                             try:
                                 wandb.init(
                                     project=self.config.project_name,
                                     entity=self.config.entity,
-                                    id=deterministic_run_id,  # Fixed ID prevents duplicates
+                                    id=unique_run_id,  # Unique ID with timestamp
                                     name=exp_name,
                                     tags=self._generate_tags(pillar_combo, hyperparams),
                                     config=hyperparams,  # Pass hyperparams directly
-                                    resume="allow",  # Allow resuming if run exists
+                                    reinit=True,  # Force new run instead of resume
                                     # Enhanced safety settings
                                     settings=wandb.Settings(
                                         start_method="thread",  # Use threading instead of forking
@@ -1241,7 +1243,7 @@ class ResearchAblationStudy:
                                         # Note: _disable_service removed due to pydantic validation error
                                     )
                                 )
-                                logging.info(f"[WANDB] Successfully initialized run {deterministic_run_id}")
+                                logging.info(f"[WANDB] Successfully initialized NEW run {unique_run_id} for {exp_name}")
                             except Exception as wandb_error:
                                 logging.warning(f"[WANDB] Failed to initialize: {wandb_error}")
                                 logging.warning("[WANDB] Continuing without wandb logging...")

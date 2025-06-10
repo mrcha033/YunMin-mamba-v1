@@ -986,7 +986,7 @@ class ResearchAblationStudy:
 ## Executive Summary
 Total experiments conducted: {len(self.results)}
 Pillar combinations tested: {len(df['pillar_combo'].unique())}
-        Hyperparameter configurations: {len(df.groupby(['lora_rank', 'mask_temperature', 'masking_ratio', 'scan_dimension']))}
+        Hyperparameter configurations: {len(df.groupby(['lora_rank', 'mask_temperature', 'masking_ratio', 'd_model']))}
 
 ## Key Findings
 
@@ -1100,7 +1100,6 @@ def main():
         config.mask_temperatures = [0.5]
         # config.importance_thresholds = [0.2]  # Removed
         config.masking_ratios = [0.5]
-        config.scan_dimensions = [128]
     elif args.mode == "quick_research":
         config.base_samples = 1000
         config.eval_samples = 200
@@ -1109,7 +1108,6 @@ def main():
         config.mask_temperatures = [0.3, 0.5]
         # config.importance_thresholds = [0.1, 0.2]  # Removed
         config.masking_ratios = [0.3, 0.5]
-        config.scan_dimensions = [64, 128]
     
     grid_size = len(config.get_experiment_grid())
     pillar_count = 8  # Number of pillar combinations

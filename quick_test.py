@@ -33,7 +33,7 @@ def quick_test(mode: str, timeout: int = 30) -> bool:
     try:
         print(f"Command: {' '.join(cmd)}")
         start_time = time.time()
-        result = subprocess.run(cmd, timeout=timeout, capture_output=True, text=True)
+        result = subprocess.run(cmd, timeout=timeout)
         end_time = time.time()
         
         print(f"Test completed in {end_time - start_time:.2f} seconds")

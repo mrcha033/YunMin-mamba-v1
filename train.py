@@ -320,6 +320,10 @@ class AdaptiveMambaTrainer:
         self.peft_manager = PEFTManager(config)
         self.model = self.peft_manager.apply_peft_to_model(self.model)
         
+        # Log PEFT allocation details to wandb AFTER PEFT application
+        if WANDB_AVAILABLE:
+            wandb.config.update({"peft_allocation": self.peft_manager.get_allocation_summary()})
+        
         # Initialize optimizer and scheduler AFTER model is potentially modified by PEFT
         self.optimizer = self._create_optimizer()
         self.scheduler = self._create_scheduler()
@@ -344,8 +348,6 @@ class AdaptiveMambaTrainer:
                 name=self.config.run_name,
                 config=asdict(self.config)
             )
-            # ### REFACTOR ### Log PEFT allocation details to wandb
-            wandb.config.update({"peft_allocation": self.peft_manager.get_allocation_summary()})
     
     def _create_model(self) -> AdaptiveMambaModel:
         """Create the Adaptive Mamba model with proper configuration."""

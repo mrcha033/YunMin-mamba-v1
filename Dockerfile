@@ -60,7 +60,14 @@ import torch, os
 print("✅ torch:", torch.__version__, "| CUDA OK:", torch.cuda.is_available())
 from mamba_ssm import MambaLMHeadModel
 print("✅ mamba-ssm import 완료")
+try:
+    import peft
+    print("✅ peft import 완료")
+except ImportError:
+    print("⚠️ peft import 실패")
 PY
 
-########################  기본 엔트리포인트  ###########################
-CMD ["python", "train_mamba.py"]
+########################  실험용 엔트리포인트  ###########################
+ENTRYPOINT ["python", "research/research_ablation_study.py"]
+
+CMD ["--mode", "research", "--epochs", "5"]

@@ -123,9 +123,111 @@ class ExperimentResult:
     final_total_params: int
     
     # Layer-wise statistics
-    layer_contributions: Dict[str, float]
+    layer_contributions: Dict[str, Dict[str, Any]]
     masking_statistics: Dict[str, Any]
     
+    def __post_init__(self):
+        """Ensure all fields are serializable and safe."""
+        # Sanitize hyperparams to prevent slice objects or other unhashable types
+        safe_hyperparams = {}
+        for k, v in self.hyperparams.items():
+            if isinstance(k, str):
+                # Convert slice objects and other unhashable types to strings
+                if isinstance(v, slice):
+                    safe_hyperparams[k] = f"slice({v.start}, {v.stop}, {v.step})"
+                elif isinstance(v, (int, float, str, bool, type(None))):
+                    safe_hyperparams[k] = v
+                else:
+                    # Convert other types to string
+                    safe_hyperparams[k] = str(v)
+            else:
+                # Convert non-string keys to strings
+                if isinstance(v, slice):
+                    safe_hyperparams[str(k)] = f"slice({v.start}, {v.stop}, {v.step})"
+                elif isinstance(v, (int, float, str, bool, type(None))):
+                    safe_hyperparams[str(k)] = v
+                else:
+                    safe_hyperparams[str(k)] = str(v)
+        
+        self.hyperparams = safe_hyperparams
+        
+        # Sanitize layer_contributions
+        safe_layer_contributions = {}
+        for k, v in self.layer_contributions.items():
+            if isinstance(k, str) and isinstance(v, dict):
+                # Ensure all nested values are also safe
+                safe_nested = {}
+                for nested_k, nested_v in v.items():
+                    if isinstance(nested_k, str):
+                        if isinstance(nested_v, slice):
+                            safe_nested[nested_k] = f"slice({nested_v.start}, {nested_v.stop}, {nested_v.step})"
+                        elif isinstance(nested_v, (int, float, str, bool, type(None))):
+                            safe_nested[nested_k] = nested_v
+                        else:
+                            safe_nested[nested_k] = str(nested_v)
+                    else:
+                        if isinstance(nested_v, slice):
+                            safe_nested[str(nested_k)] = f"slice({nested_v.start}, {nested_v.stop}, {nested_v.step})"
+                        elif isinstance(nested_v, (int, float, str, bool, type(None))):
+                            safe_nested[str(nested_k)] = nested_v
+                        else:
+                            safe_nested[str(nested_k)] = str(nested_v)
+                safe_layer_contributions[k] = safe_nested
+            else:
+                # Convert invalid entries
+                if isinstance(v, dict):
+                    safe_layer_contributions[str(k)] = v
+                else:
+                    safe_layer_contributions[str(k)] = {"value": str(v)}
+        
+        self.layer_contributions = safe_layer_contributions
+        
+        # Sanitize masking_statistics  
+        safe_masking_stats = {}
+        for k, v in self.masking_statistics.items():
+            if isinstance(k, str):
+                if isinstance(v, slice):
+                    safe_masking_stats[k] = f"slice({v.start}, {v.stop}, {v.step})"
+                elif isinstance(v, (int, float, str, bool, type(None), dict)):
+                    safe_masking_stats[k] = v
+                else:
+                    safe_masking_stats[k] = str(v)
+            else:
+                if isinstance(v, slice):
+                    safe_masking_stats[str(k)] = f"slice({v.start}, {v.stop}, {v.step})"
+                elif isinstance(v, (int, float, str, bool, type(None), dict)):
+                    safe_masking_stats[str(k)] = v
+                else:
+                    safe_masking_stats[str(k)] = str(v)
+        
+        self.masking_statistics = safe_masking_stats
+        
+        # Sanitize task_metrics
+        safe_task_metrics = {}
+        for k, v in self.task_metrics.items():
+            if isinstance(k, str):
+                if isinstance(v, slice):
+                    safe_task_metrics[k] = 0.0  # Default for slice objects in metrics
+                elif isinstance(v, (int, float)):
+                    safe_task_metrics[k] = float(v)
+                else:
+                    try:
+                        safe_task_metrics[k] = float(v)
+                    except (ValueError, TypeError):
+                        safe_task_metrics[k] = 0.0
+            else:
+                if isinstance(v, slice):
+                    safe_task_metrics[str(k)] = 0.0
+                elif isinstance(v, (int, float)):
+                    safe_task_metrics[str(k)] = float(v)
+                else:
+                    try:
+                        safe_task_metrics[str(k)] = float(v)
+                    except (ValueError, TypeError):
+                        safe_task_metrics[str(k)] = 0.0
+        
+        self.task_metrics = safe_task_metrics
+
     def calculate_efficiency_score(self) -> float:
         """Calculate 3D efficiency score: Accuracy / (FLOPs × Params)."""
         # Use task-specific accuracy metric if available
@@ -421,22 +523,6 @@ class ResearchAblationStudy:
         layer_contributions = self._analyze_layer_contributions(trainer.model)
         masking_stats = self._collect_masking_statistics(trainer.model)
         
-        # Ensure all dictionary values are serializable and safe
-        safe_layer_contributions = {}
-        for k, v in layer_contributions.items():
-            if isinstance(k, str) and isinstance(v, dict):
-                safe_layer_contributions[k] = v
-            else:
-                logging.warning(f"Invalid layer contribution entry: {type(k)} -> {type(v)}")
-                safe_layer_contributions[str(k)] = dict(v) if hasattr(v, 'items') else {'value': str(v)}
-        
-        safe_masking_stats = {}
-        for k, v in masking_stats.items():
-            if isinstance(k, str):
-                safe_masking_stats[k] = v
-            else:
-                safe_masking_stats[str(k)] = v
-        
         # Create result
         result = ExperimentResult(
             experiment_name=experiment_name,
@@ -445,7 +531,7 @@ class ResearchAblationStudy:
             final_loss=trainer.best_loss if hasattr(trainer, 'best_loss') else 0.0,
             final_perplexity=perplexity,
             parameter_reduction=(initial_params - final_trainable) / initial_params * 100,
-            average_sparsity=safe_masking_stats.get('average_sparsity', 0.0),
+            average_sparsity=masking_stats.get('average_sparsity', 0.0),
             task_metrics=task_metrics,
             total_flops=total_flops,
             peak_memory_mb=peak_memory,
@@ -454,8 +540,8 @@ class ResearchAblationStudy:
             initial_params=initial_params,
             final_trainable_params=final_trainable,
             final_total_params=final_total,
-            layer_contributions=safe_layer_contributions,
-            masking_statistics=safe_masking_stats
+            layer_contributions=layer_contributions,
+            masking_statistics=masking_stats
         )
         
         # Log to wandb
@@ -803,6 +889,7 @@ class ResearchAblationStudy:
         """Convert results to pandas DataFrame."""
         data = []
         for result in self.results:
+            # Base row data
             row = {
                 'experiment_name': result.experiment_name,
                 'pillar_combo': result.experiment_name.split('_r')[0],
@@ -815,8 +902,30 @@ class ResearchAblationStudy:
                 'efficiency_score': result.calculate_efficiency_score(),
                 'training_time': result.training_time_seconds,
                 'inference_time': result.inference_time_ms,
-                **result.hyperparams
             }
+            
+            # Safely add hyperparams to avoid slice objects or other unhashable types
+            for k, v in result.hyperparams.items():
+                # Ensure key is string
+                safe_key = str(k) if not isinstance(k, str) else k
+                
+                # Handle slice objects and other unhashable types
+                if isinstance(v, slice):
+                    row[safe_key] = f"slice({v.start},{v.stop},{v.step})"
+                elif isinstance(v, (int, float, str, bool)):
+                    row[safe_key] = v
+                elif v is None:
+                    row[safe_key] = None
+                elif hasattr(v, '__iter__') and not isinstance(v, (str, bytes)):
+                    # Handle lists, tuples, etc.
+                    try:
+                        row[safe_key] = str(list(v))
+                    except Exception:
+                        row[safe_key] = str(v)
+                else:
+                    # Convert other types to string
+                    row[safe_key] = str(v)
+            
             data.append(row)
         
         return pd.DataFrame(data)
@@ -890,7 +999,7 @@ class ResearchAblationStudy:
         if df.empty:
             return
         
-        # Extract layer contribution data
+        # Extract layer contribution data with enhanced safety
         layer_data = []
         experiments = []
         
@@ -904,10 +1013,43 @@ class ResearchAblationStudy:
             for result in self.results:
                 if result.experiment_name == exp_name:
                     for block_name, block_stats in result.layer_contributions.items():
+                        # Ensure block_name is a valid string
+                        safe_block_name = str(block_name) if not isinstance(block_name, str) else block_name
+                        
                         if isinstance(block_stats, dict):
-                            layer_row[f"{block_name}_sparsity"] = block_stats.get('sparsity', 0.0)
-                            layer_row[f"{block_name}_lora_ratio"] = block_stats.get('lora_ratio', 0.0)
-                            layer_row[f"{block_name}_grad_norm"] = block_stats.get('avg_grad_norm', 0.0)
+                            # Safely extract values and handle slice objects
+                            sparsity_val = block_stats.get('sparsity', 0.0)
+                            lora_ratio_val = block_stats.get('lora_ratio', 0.0)
+                            grad_norm_val = block_stats.get('avg_grad_norm', 0.0)
+                            
+                            # Convert slice objects to strings if needed
+                            if isinstance(sparsity_val, slice):
+                                sparsity_val = 0.0
+                            elif not isinstance(sparsity_val, (int, float)):
+                                try:
+                                    sparsity_val = float(sparsity_val)
+                                except (ValueError, TypeError):
+                                    sparsity_val = 0.0
+                            
+                            if isinstance(lora_ratio_val, slice):
+                                lora_ratio_val = 0.0
+                            elif not isinstance(lora_ratio_val, (int, float)):
+                                try:
+                                    lora_ratio_val = float(lora_ratio_val)
+                                except (ValueError, TypeError):
+                                    lora_ratio_val = 0.0
+                            
+                            if isinstance(grad_norm_val, slice):
+                                grad_norm_val = 0.0
+                            elif not isinstance(grad_norm_val, (int, float)):
+                                try:
+                                    grad_norm_val = float(grad_norm_val)
+                                except (ValueError, TypeError):
+                                    grad_norm_val = 0.0
+                            
+                            layer_row[f"{safe_block_name}_sparsity"] = sparsity_val
+                            layer_row[f"{safe_block_name}_lora_ratio"] = lora_ratio_val
+                            layer_row[f"{safe_block_name}_grad_norm"] = grad_norm_val
                     break
             layer_data.append(layer_row)
         
@@ -934,80 +1076,93 @@ class ResearchAblationStudy:
             plt.close()
             return
         
-        # Create DataFrames for different metrics
-        layer_df = pd.DataFrame(layer_data, index=experiments)
+        # Create DataFrames for different metrics with safe indexing
+        try:
+            layer_df = pd.DataFrame(layer_data, index=experiments)
+        except Exception as e:
+            logging.warning(f"Failed to create layer DataFrame: {e}")
+            return
         
         # Plot sparsity heatmap
         sparsity_cols = [col for col in layer_df.columns if 'sparsity' in col]
         if sparsity_cols:
-            plt.figure(figsize=(14, 8))
-            sparsity_data = layer_df[sparsity_cols].fillna(0)
-            
-            sns.heatmap(
-                sparsity_data,
-                annot=True,
-                fmt='.2f',
-                cmap='Blues',
-                cbar_kws={'label': 'Sparsity'},
-                xticklabels=[col.replace('_sparsity', '') for col in sparsity_cols],
-                yticklabels=[exp[:15] + '...' if len(exp) > 15 else exp for exp in experiments]
-            )
-            plt.title('Layer-wise Sparsity Across Experiments')
-            plt.xlabel('Model Blocks')
-            plt.ylabel('Experiments')
-            plt.tight_layout()
-            plt.savefig(self.output_dir / 'plots' / 'layer_sparsity_heatmap.png', 
-                       dpi=300, bbox_inches='tight')
-            plt.close()
+            try:
+                plt.figure(figsize=(14, 8))
+                sparsity_data = layer_df[sparsity_cols].fillna(0)
+                
+                sns.heatmap(
+                    sparsity_data,
+                    annot=True,
+                    fmt='.2f',
+                    cmap='Blues',
+                    cbar_kws={'label': 'Sparsity'},
+                    xticklabels=[col.replace('_sparsity', '') for col in sparsity_cols],
+                    yticklabels=[exp[:15] + '...' if len(exp) > 15 else exp for exp in experiments]
+                )
+                plt.title('Layer-wise Sparsity Across Experiments')
+                plt.xlabel('Model Blocks')
+                plt.ylabel('Experiments')
+                plt.tight_layout()
+                plt.savefig(self.output_dir / 'plots' / 'layer_sparsity_heatmap.png', 
+                           dpi=300, bbox_inches='tight')
+                plt.close()
+            except Exception as e:
+                logging.warning(f"Failed to plot sparsity heatmap: {e}")
         
         # Plot LoRA ratio heatmap
         lora_cols = [col for col in layer_df.columns if 'lora_ratio' in col]
         if lora_cols:
-            plt.figure(figsize=(14, 8))
-            lora_data = layer_df[lora_cols].fillna(0)
-            
-            sns.heatmap(
-                lora_data,
-                annot=True,
-                fmt='.3f',
-                cmap='Reds',
-                cbar_kws={'label': 'LoRA Parameter Ratio'},
-                xticklabels=[col.replace('_lora_ratio', '') for col in lora_cols],
-                yticklabels=[exp[:15] + '...' if len(exp) > 15 else exp for exp in experiments]
-            )
-            plt.title('Layer-wise LoRA Parameter Ratio Across Experiments')
-            plt.xlabel('Model Blocks')
-            plt.ylabel('Experiments')
-            plt.tight_layout()
-            plt.savefig(self.output_dir / 'plots' / 'layer_lora_heatmap.png', 
-                       dpi=300, bbox_inches='tight')
-            plt.close()
+            try:
+                plt.figure(figsize=(14, 8))
+                lora_data = layer_df[lora_cols].fillna(0)
+                
+                sns.heatmap(
+                    lora_data,
+                    annot=True,
+                    fmt='.3f',
+                    cmap='Reds',
+                    cbar_kws={'label': 'LoRA Parameter Ratio'},
+                    xticklabels=[col.replace('_lora_ratio', '') for col in lora_cols],
+                    yticklabels=[exp[:15] + '...' if len(exp) > 15 else exp for exp in experiments]
+                )
+                plt.title('Layer-wise LoRA Parameter Ratio Across Experiments')
+                plt.xlabel('Model Blocks')
+                plt.ylabel('Experiments')
+                plt.tight_layout()
+                plt.savefig(self.output_dir / 'plots' / 'layer_lora_heatmap.png', 
+                           dpi=300, bbox_inches='tight')
+                plt.close()
+            except Exception as e:
+                logging.warning(f"Failed to plot LoRA heatmap: {e}")
         
         # Plot gradient norm heatmap
         grad_cols = [col for col in layer_df.columns if 'grad_norm' in col]
         if grad_cols:
-            plt.figure(figsize=(14, 8))
-            grad_data = layer_df[grad_cols].fillna(0)
-            
-            # Log scale for gradient norms (they can vary widely)
-            grad_data_log = np.log1p(grad_data)
-            
-            sns.heatmap(
-                grad_data_log,
-                annot=True,
-                fmt='.2f',
-                cmap='Greens',
-                cbar_kws={'label': 'Log(1 + Gradient Norm)'},
-                xticklabels=[col.replace('_grad_norm', '') for col in grad_cols],
-                yticklabels=[exp[:15] + '...' if len(exp) > 15 else exp for exp in experiments]
-            )
-            plt.title('Layer-wise Gradient Norms Across Experiments')
-            plt.xlabel('Model Blocks')
-            plt.ylabel('Experiments')
-            plt.tight_layout()
-            plt.savefig(self.output_dir / 'plots' / 'layer_gradient_heatmap.png', 
-                       dpi=300, bbox_inches='tight')
-            plt.close()
+            try:
+                plt.figure(figsize=(14, 8))
+                grad_data = layer_df[grad_cols].fillna(0)
+                
+                # Log scale for gradient norms (they can vary widely)
+                grad_data_log = np.log1p(grad_data)
+                
+                sns.heatmap(
+                    grad_data_log,
+                    annot=True,
+                    fmt='.2f',
+                    cmap='Greens',
+                    cbar_kws={'label': 'Log(1 + Gradient Norm)'},
+                    xticklabels=[col.replace('_grad_norm', '') for col in grad_cols],
+                    yticklabels=[exp[:15] + '...' if len(exp) > 15 else exp for exp in experiments]
+                )
+                plt.title('Layer-wise Gradient Norms Across Experiments')
+                plt.xlabel('Model Blocks')
+                plt.ylabel('Experiments')
+                plt.tight_layout()
+                plt.savefig(self.output_dir / 'plots' / 'layer_gradient_heatmap.png', 
+                           dpi=300, bbox_inches='tight')
+                plt.close()
+            except Exception as e:
+                logging.warning(f"Failed to plot gradient norm heatmap: {e}")
         
         logging.info("[PLOTS] Layer contribution heatmaps generated")
     
@@ -1067,33 +1222,73 @@ class ResearchAblationStudy:
     
     def save_results(self):
         """Save comprehensive results to files."""
-        # Save detailed results
-        results_data = [
-            {
+        
+        def make_json_safe(obj):
+            """Recursively convert objects to JSON-safe format."""
+            if isinstance(obj, slice):
+                return f"slice({obj.start},{obj.stop},{obj.step})"
+            elif isinstance(obj, (int, float, str, bool, type(None))):
+                return obj
+            elif isinstance(obj, dict):
+                return {str(k): make_json_safe(v) for k, v in obj.items()}
+            elif isinstance(obj, (list, tuple)):
+                return [make_json_safe(item) for item in obj]
+            elif hasattr(obj, 'item'):  # numpy scalars
+                try:
+                    return obj.item()
+                except (ValueError, TypeError):
+                    return str(obj)
+            else:
+                return str(obj)
+        
+        # Save detailed results with safe serialization
+        results_data = []
+        for r in self.results:
+            safe_result = {
                 'experiment_name': r.experiment_name,
-                'hyperparams': r.hyperparams,
-                'metrics': {
+                'hyperparams': make_json_safe(r.hyperparams),
+                'metrics': make_json_safe({
                     'perplexity': r.final_perplexity,
                     'parameter_reduction': r.parameter_reduction,
                     'sparsity': r.average_sparsity,
                     'efficiency_score': r.calculate_efficiency_score()
-                },
-                'performance': {
+                }),
+                'performance': make_json_safe({
                     'flops': r.total_flops,
                     'memory_mb': r.peak_memory_mb,
                     'training_time': r.training_time_seconds,
                     'inference_time': r.inference_time_ms
-                }
+                }),
+                'layer_contributions': make_json_safe(r.layer_contributions),
+                'masking_statistics': make_json_safe(r.masking_statistics),
+                'task_metrics': make_json_safe(r.task_metrics)
             }
-            for r in self.results
-        ]
+            results_data.append(safe_result)
         
-        with open(self.output_dir / 'comprehensive_results.json', 'w') as f:
-            json.dump(results_data, f, indent=2)
+        try:
+            with open(self.output_dir / 'comprehensive_results.json', 'w') as f:
+                json.dump(results_data, f, indent=2)
+        except Exception as e:
+            logging.error(f"Failed to save JSON results: {e}")
+            # Save a simplified version
+            simple_results = [
+                {
+                    'experiment_name': r.experiment_name,
+                    'perplexity': float(r.final_perplexity),
+                    'efficiency_score': float(r.calculate_efficiency_score()),
+                    'parameter_reduction': float(r.parameter_reduction)
+                }
+                for r in self.results
+            ]
+            with open(self.output_dir / 'simple_results.json', 'w') as f:
+                json.dump(simple_results, f, indent=2)
         
         # Save CSV for easy analysis
-        df = self._results_to_dataframe()
-        df.to_csv(self.output_dir / 'results.csv', index=False)
+        try:
+            df = self._results_to_dataframe()
+            df.to_csv(self.output_dir / 'results.csv', index=False)
+        except Exception as e:
+            logging.error(f"Failed to save CSV results: {e}")
         
         logging.info(f"[SAVE] Results saved to {self.output_dir}")
     

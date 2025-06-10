@@ -43,7 +43,11 @@ def test_evaluate_other_tasks():
     qa_res = evaluate_model_on_task(model, [batch_qa], "question_answering", tokenizer=tok)
     assert "exact_match" in qa_res
 
-    batch_code = {"prompt": "p", "test": "assert True", "task_id": "t1"}
-    code_res = evaluate_model_on_task(model, [batch_code], "code_generation")
+    batch_code = {
+        "input_ids": torch.ones((1, 2), dtype=torch.long),
+        "test": ["assert True"],
+        "task_id": ["t1"],
+    }
+    code_res = evaluate_model_on_task(model, [batch_code], "code_generation", tokenizer=tok)
     assert "pass_at_1" in code_res
 

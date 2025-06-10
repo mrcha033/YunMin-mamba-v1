@@ -33,9 +33,9 @@ except ImportError:
 
 # IA3 utilities
 try:
-    from .ia3_layers import insert_ia3_modules
+    from .layers.ia3_layers import insert_ia3_modules
 except ImportError:
-    from ia3_layers import insert_ia3_modules
+    from layers.ia3_layers import insert_ia3_modules
 
 # Wandb for logging with fallback
 try:

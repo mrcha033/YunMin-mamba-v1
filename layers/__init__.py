@@ -20,13 +20,17 @@ from .learned_mask import (
     AdaptiveSparsityMask
 )
 
+# Pillar 2 additional layers
 from .masked_linear import (
     MaskedLinear,
     MaskedConv1d,
     convert_to_masked
 )
 
-# Pillar 3: Hybrid PEFT (now handled by the official peft library in train.py)
+# Pillar 3: IA3 adapters
+from .ia3_layers import insert_ia3_modules
+
+# Pillar 3: Hybrid PEFT utilities
 
 __all__ = [
     # Pillar 1
@@ -45,5 +49,6 @@ __all__ = [
     'MaskedConv1d',
     'convert_to_masked',
     
-    # Pillar 3: Now handled by official peft library
+    # Pillar 3
+    'insert_ia3_modules',
 ]

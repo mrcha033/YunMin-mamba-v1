@@ -231,8 +231,8 @@ YunMin-mamba-v1/
 ├── research_ablation_study.py    # Comprehensive ablation study
 ├── research_evaluate.py          # Evaluation framework
 ├── research_datasets.py          # Dataset utilities
-├── ia3_layers.py                 # IA³ adapter implementation
 ├── layers/                       # Core layer implementations
+│   ├── ia3_layers.py             # IA³ adapter implementation
 │   ├── variable_scan.py          # Variable-aware scan (Pillar 1)
 │   ├── masked_linear.py          # Learned masking (Pillar 2)
 │   └── ...

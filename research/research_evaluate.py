@@ -501,7 +501,7 @@ def test_evaluators():
     """Test all evaluator implementations."""
     logging.basicConfig(level=logging.INFO)
     
-    print("🧪 Testing evaluators...")
+    print("[TEST] Testing evaluators...")
     
     # Test PerplexityEvaluator
     print("\n1. Testing PerplexityEvaluator...")
@@ -540,7 +540,7 @@ def test_evaluators():
     code_results = code_eval.compute()
     print(f"   Pass@1: {code_results['pass_at_1']:.3f}")
     
-    print("\n✅ All evaluators tested successfully!")
+    print("\n[OK] All evaluators tested successfully!")
 
 if __name__ == "__main__":
     test_evaluators() 

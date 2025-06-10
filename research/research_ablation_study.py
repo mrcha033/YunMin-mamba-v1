@@ -293,7 +293,7 @@ class ResearchAblationStudy:
         """
         
         experiment_name = f"{pillar_config}_r{hyperparams['lora_rank']}_t{hyperparams['mask_temperature']}"
-        logging.info(f"🧪 Running experiment: {experiment_name}")
+        logging.info(f"[EXPERIMENT] Running experiment: {experiment_name}")
         
         # Determine vocab_size from tokenizer or use default
         vocab_size = 2000  # Default fallback
@@ -1071,7 +1071,7 @@ class ResearchAblationStudy:
         df = self._results_to_dataframe()
         df.to_csv(self.output_dir / 'results.csv', index=False)
         
-        logging.info(f"💾 Results saved to {self.output_dir}")
+        logging.info(f"[SAVE] Results saved to {self.output_dir}")
     
     def generate_research_report(self):
         """Generate comprehensive research report."""
@@ -1247,11 +1247,11 @@ def main():
     study = ResearchAblationStudy(config)
     results = study.run_comprehensive_study()
     
-    print(f"\n🎉 Research study completed!")
-    print(f"📁 Results: {study.output_dir}")
+    print(f"\n[COMPLETE] Research study completed!")
+    print(f"[RESULTS] Results: {study.output_dir}")
     print(f"[REPORT] Report: {study.output_dir / 'RESEARCH_REPORT.md'}")
     if config.enable_visualization:
-        print(f"📈 Plots: {study.output_dir / 'plots'}")
+        print(f"[PLOTS] Plots: {study.output_dir / 'plots'}")
 
 if __name__ == "__main__":
     main() 

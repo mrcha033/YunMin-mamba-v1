@@ -428,11 +428,11 @@ def test_datasets():
     tasks = ["language_modeling", "summarization", "question_answering", "code_generation"]
     
     for task in tasks:
-        print(f"\n🧪 Testing {task} dataset...")
+        print(f"\n[TEST] Testing {task} dataset...")
         try:
             # Create small test dataset
             dataset = DatasetFactory.create_dataset(task, split="train", num_samples=5)
-            print(f"✅ {task}: {len(dataset)} samples loaded")
+            print(f"[OK] {task}: {len(dataset)} samples loaded")
             
             # Test first item
             sample = dataset[0]
@@ -445,7 +445,7 @@ def test_datasets():
             print(f"   Batch input shape: {batch['input_ids'].shape}")
             
         except Exception as e:
-            print(f"❌ {task}: Error - {e}")
+            print(f"[ERROR] {task}: Error - {e}")
 
 if __name__ == "__main__":
     test_datasets() 

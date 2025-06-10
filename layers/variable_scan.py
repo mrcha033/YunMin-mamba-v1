@@ -132,8 +132,8 @@ def invert_permutation(x: torch.Tensor, pi: torch.Tensor) -> torch.Tensor:
         Tensor restored to original order
     """
     # Compute inverse permutation
-    pi_inv = torch.zeros_like(pi)
-    pi_inv[pi] = torch.arange(len(pi), device=pi.device)
+    pi_inv = torch.zeros_like(pi, device=pi.device)
+    pi_inv[pi] = torch.arange(len(pi), device=pi.device, dtype=pi.dtype)
     
     return x[:, :, pi_inv]
 
@@ -159,7 +159,8 @@ class VariableScanOptimizer:
         self.mode = mode
         self.update_frequency = update_frequency
         self.step_count = 0
-        self.current_permutation = torch.arange(d_model)
+        # Initialize on CPU - will be moved to correct device on first use
+        self.current_permutation = torch.arange(d_model, dtype=torch.long)
         self.is_initialized = False  # Track if static permutation has been computed
     
     def update_permutation(self, hidden_states: torch.Tensor) -> bool:
@@ -196,8 +197,8 @@ class VariableScanOptimizer:
 
     def get_inverse_permutation(self) -> torch.Tensor:
         """Get inverse of the current scan permutation."""
-        inverse = torch.empty_like(self.current_permutation)
+        inverse = torch.empty_like(self.current_permutation, device=self.current_permutation.device)
         inverse[self.current_permutation] = torch.arange(
-            self.d_model, device=self.current_permutation.device
+            self.d_model, device=self.current_permutation.device, dtype=self.current_permutation.dtype
         )
         return inverse

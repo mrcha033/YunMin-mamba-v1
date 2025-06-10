@@ -26,13 +26,14 @@ except ImportError:
     MAMBA_AVAILABLE = False
 
 class FallbackMamba(nn.Module):
-    """Minimal recurrent SSM fallback when ``mamba_ssm`` is unavailable.
+    """Simplified recurrent SSM used when ``mamba_ssm`` is unavailable.
 
-    The module mimics the behaviour of the official Mamba mixer by
-    maintaining a recurrent state ``s`` with dimension ``d_state``.  At
-    each time step the state is updated according to ``s <- A @ s + B @ x``
-    where ``x`` is the projected input.  The updated state contributes to
-    the gating/output projection via an additional linear mapping.
+    This module loosely emulates the official Mamba mixer using a basic
+    recurrent formulation. It does **not** implement the selective (S6)
+    state mechanism and therefore is **not** a performance-equivalent
+    substitute for the real implementation. The state ``s`` of dimension
+    ``d_state`` is updated at each timestep via ``s <- A @ s + B @ x`` and
+    contributes to the output projection.
     """
 
     def __init__(self, d_model: int, d_state: int = 16, d_conv: int = 4, expand: int = 2):

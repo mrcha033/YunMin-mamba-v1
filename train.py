@@ -136,8 +136,16 @@ class PEFTManager:
         lora_target_modules = [name for name, _ in sorted_layers[:num_lora]]
         ia3_target_modules = [name for name, _ in sorted_layers[num_lora:num_layers_to_tune]]
 
-        logging.info(f"LoRA will be applied to {len(lora_target_modules)} high-importance modules.")
-        logging.info(f"IA³ will be applied to {len(ia3_target_modules)} mid-importance modules.")
+        logging.info(f"LoRA will be applied to {len(lora_target_modules)} high-importance modules: {lora_target_modules}")
+        logging.info(f"IA³ will be applied to {len(ia3_target_modules)} mid-importance modules: {ia3_target_modules}")
+        
+        if lora_target_modules or ia3_target_modules:
+            logging.info("Importance-based PEFT allocation:")
+            for name, score in sorted_layers[:10]:  # Log top 10 for reference
+                status = "LoRA" if name in lora_target_modules else "IA³" if name in ia3_target_modules else "Frozen"
+                logging.info(f"  {name}: {score:.4f} -> {status}")
+            if len(sorted_layers) > 10:
+                logging.info(f"  ... and {len(sorted_layers) - 10} more layers")
 
         params_before = set(model.parameters())
 

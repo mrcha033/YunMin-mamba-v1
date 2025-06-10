@@ -77,12 +77,17 @@ The training script uses a `TrainingConfig` dataclass with extensive configurati
 - Model: `d_model=256`, `n_layers=4`, `vocab_size=1000`
 - Training: `batch_size=16`, `learning_rate=1e-4`, `num_epochs=10`
 - PEFT: `peft_r=16`, `peft_alpha=32`, `peft_dropout=0.1`
-- IA³: set `enable_ia3=True` to insert scaling layers before LoRA
 - Masking: `masking_tau=0.5`, `target_sparsity=0.3`
 
-Setting `enable_ia3=True` causes the training script to call
-`insert_ia3_modules(model)` before LoRA adapters are attached, enabling the
-lightweight IA³ scaling factors on supported layers.
+**Hybrid PEFT (Pillar 3) - LoRA and IA³:**
+Our model employs a unique, importance-driven approach to apply PEFT methods. Instead of statically assigning tuning methods, it dynamically allocates LoRA to high-importance layers and the more lightweight IA³ to mid-importance layers.
+
+- **Importance Score**: Calculated from the learned masks (Pillar 2), reflecting each parameter's contribution
+- **Dynamic Allocation**:
+  - LoRA is applied to the most critical layers (e.g., top 30% by importance) for expressive tuning
+  - IA³ is applied to less critical but still significant layers for highly parameter-efficient tuning
+  - Unimportant layers are left frozen
+- **Configuration**: `peft_application_ratio=0.6`, `importance_threshold=0.7` - Controls which layers receive LoRA vs. IA³ based on importance scores
 
 ### 2. Research Ablation Study (`research_ablation_study.py`)
 

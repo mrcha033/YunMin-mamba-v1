@@ -339,6 +339,10 @@ class AdaptiveMambaModel(nn.Module):
         logits = self.lm_head(x)
         
         return logits
+
+    def prepare_inputs_for_generation(self, input_ids, **kwargs):
+        """Compatibility helper for PEFT generation APIs."""
+        return {"input_ids": input_ids}
     
     def get_total_regularization_loss(self) -> torch.Tensor:
         """Get total regularization loss from all blocks."""

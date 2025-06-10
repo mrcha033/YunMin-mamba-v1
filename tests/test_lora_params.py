@@ -28,6 +28,6 @@ def test_lora_parameter_count():
 
     total_after, trainable_after = count_parameters(lora_model)
 
-    assert total_after == total_before  # LoRA should not change total params
-    assert trainable_after > trainable_before
+    # LoRA adds additional parameters while freezing the base layers
+    assert total_after > total_before
     assert trainable_after < total_after

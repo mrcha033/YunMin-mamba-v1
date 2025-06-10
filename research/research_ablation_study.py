@@ -351,9 +351,9 @@ class ResearchAblationStudy:
                     tokenizer = train_dataset.tokenizer
                     vocab_size = len(tokenizer.get_vocab()) if hasattr(tokenizer, 'get_vocab') else tokenizer.vocab_size
                     config.vocab_size = vocab_size
-                    logging.info(f"✅ Updated vocab_size to {vocab_size} from {primary_task} tokenizer")
+                    logging.info(f"[OK] Updated vocab_size to {vocab_size} from {primary_task} tokenizer")
                 
-                logging.info(f"✅ Using real {primary_task} dataset")
+                logging.info(f"[OK] Using real {primary_task} dataset")
             except Exception as e:
                 logging.warning(f"Failed to load real dataset, falling back to SimpleDataset: {e}")
                 train_dataset = SimpleDataset(
@@ -412,7 +412,7 @@ class ResearchAblationStudy:
             if primary_task in ["language_modeling", "summarization", "question_answering", "code_generation"]:
                 task_results = evaluate_model_on_task(trainer.model, eval_dataloader, primary_task)
                 task_metrics.update(task_results)
-                logging.info(f"📊 Task-specific metrics computed for {primary_task}")
+                logging.info(f"[METRICS] Task-specific metrics computed for {primary_task}")
         except Exception as e:
             logging.warning(f"Failed to compute task-specific metrics: {e}")
             task_metrics = {}
@@ -457,7 +457,7 @@ class ResearchAblationStudy:
                 **{f"hyperparams/{k}": v for k, v in hyperparams.items()}
             })
         
-        logging.info(f"✅ Completed {experiment_name}: PPL={perplexity:.2f}, "
+        logging.info(f"[OK] Completed {experiment_name}: PPL={perplexity:.2f}, "
                     f"Param reduction={result.parameter_reduction:.1f}%, "
                     f"Efficiency={result.calculate_efficiency_score():.2e}")
         
@@ -509,69 +509,83 @@ class ResearchAblationStudy:
         }
         return configs.get(pillar_name, configs["baseline"])
     
-    def _analyze_layer_contributions(self, model: torch.nn.Module) -> Dict[str, float]:
-        """Analyze contribution of each layer to overall performance.
-
-        LoRA parameter counts include parameters from any associated dropout
-        modules when present.
-        """
+    def _analyze_layer_contributions(self, model: torch.nn.Module) -> Dict[str, Any]:
+        """Analyze contribution of each layer to overall performance. (Revised for robustness)"""
         contributions = {}
         
-        if hasattr(model, 'blocks'):
-            for i, block in enumerate(model.blocks):
-                block_contribution = {}
+        if not hasattr(model, 'blocks'):
+            return contributions
+
+        for i, block in enumerate(model.blocks):
+            block_name = f'block_{i}'
+            block_contribution = {}
+
+            # Parameter count contribution
+            layer_params = sum(p.numel() for p in block.parameters())
+            trainable_params = sum(p.numel() for p in block.parameters() if p.requires_grad)
+            block_contribution['total_params'] = layer_params
+            block_contribution['trainable_params'] = trainable_params
+            block_contribution['param_ratio'] = trainable_params / layer_params if layer_params > 0 else 0
+
+            # Gradient norm analysis (if available after backward pass)
+            total_grad_norm_sq = 0.0
+            param_count_with_grad = 0
+            for param in block.parameters():
+                if param.grad is not None:
+                    total_grad_norm_sq += param.grad.norm().item() ** 2
+                    param_count_with_grad += 1
+            
+            if param_count_with_grad > 0:
+                block_contribution['avg_grad_norm'] = (total_grad_norm_sq / param_count_with_grad) ** 0.5
+            else:
+                block_contribution['avg_grad_norm'] = 0.0
+
+            # LoRA/PEFT specific analysis (using getattr for safety)
+            lora_params = 0
+            mixer = getattr(block, 'mixer', None)
+            if mixer:
+                # Official Mamba structure
+                in_proj = getattr(mixer, 'in_proj', None)
+                if in_proj and hasattr(in_proj, 'lora_A') and hasattr(in_proj, 'lora_B'):
+                    lora_params += in_proj.lora_A.numel() + in_proj.lora_B.numel()
                 
-                # Parameter count contribution
-                layer_params = sum(p.numel() for p in block.parameters())
-                trainable_params = sum(p.numel() for p in block.parameters() if p.requires_grad)
-                block_contribution['total_params'] = layer_params
-                block_contribution['trainable_params'] = trainable_params
-                block_contribution['param_ratio'] = trainable_params / layer_params if layer_params > 0 else 0
-                
-                # Gradient norm analysis (if available)
-                total_grad_norm = 0.0
-                param_count = 0
-                for param in block.parameters():
-                    if param.grad is not None:
-                        total_grad_norm += param.grad.norm().item() ** 2
-                        param_count += 1
-                
-                if param_count > 0:
-                    block_contribution['avg_grad_norm'] = (total_grad_norm / param_count) ** 0.5
-                else:
-                    block_contribution['avg_grad_norm'] = 0.0
-                
-                # LoRA/PEFT specific analysis
-                lora_params = 0
-                if hasattr(block, 'mixer') and hasattr(block.mixer, 'in_proj'):
-                    # Check if LoRA is applied
-                    in_proj = block.mixer.in_proj
-                    if hasattr(in_proj, 'lora_A') and hasattr(in_proj, 'lora_B'):
-                        lora_params += in_proj.lora_A.numel() + in_proj.lora_B.numel()
-                    if hasattr(in_proj, 'lora_dropout'):
-                        # Account for parameters of any LoRA dropout modules
-                        lora_params += sum(
-                            p.numel() for p in in_proj.lora_dropout.parameters()
-                        )
-                
-                block_contribution['lora_params'] = lora_params
-                block_contribution['lora_ratio'] = lora_params / layer_params if layer_params > 0 else 0
-                
-                # Masking analysis
-                if hasattr(block, 'get_masking_statistics'):
+                # PEFT might add a 'lora_dropout' module with a dictionary of modules
+                lora_dropout_modules = getattr(in_proj, 'lora_dropout', None) if in_proj else None
+                if lora_dropout_modules is not None:
+                    try:
+                        if hasattr(lora_dropout_modules, 'parameters'):
+                            lora_params += sum(p.numel() for p in lora_dropout_modules.parameters())
+                    except Exception:
+                        pass  # Ignore errors in LoRA parameter counting
+            
+            block_contribution['lora_params'] = lora_params
+            block_contribution['lora_ratio'] = lora_params / layer_params if layer_params > 0 else 0
+
+            # Masking analysis (using getattr for safety)
+            if hasattr(block, 'get_masking_statistics'):
+                try:
                     mask_stats = block.get_masking_statistics()
-                    if mask_stats:
-                        avg_sparsity = np.mean([
-                            stats.get('current_sparsity', 0.0) 
-                            for stats in mask_stats.values()
-                        ])
+                    if mask_stats and isinstance(mask_stats, dict):
+                        # Filter out non-dict values that might come from unexpected states
+                        valid_stats = []
+                        for key, stats in mask_stats.items():
+                            if isinstance(stats, dict) and 'current_sparsity' in stats:
+                                valid_stats.append(stats['current_sparsity'])
+                        avg_sparsity = np.mean(valid_stats) if valid_stats else 0.0
                         block_contribution['sparsity'] = avg_sparsity
                     else:
                         block_contribution['sparsity'] = 0.0
-                else:
-                    block_contribution['sparsity'] = 0.0
-                
-                contributions[f'block_{i}'] = block_contribution
+                except Exception:
+                     block_contribution['sparsity'] = 0.0  # Catch any errors during stat collection
+            else:
+                block_contribution['sparsity'] = 0.0
+            
+            # Ensure the key is a string before assignment
+            if isinstance(block_name, str):
+                contributions[block_name] = block_contribution
+            else:
+                # This should not happen, but as a safeguard
+                contributions[str(block_name)] = block_contribution
         
         return contributions
     
@@ -611,7 +625,7 @@ class ResearchAblationStudy:
         # Get the base hyperparameter grid, excluding d_model
         base_hyperparam_grid = self.config.get_experiment_grid()
         
-        logging.info(f"🎯 Starting comprehensive research study (stratified by model size)")
+        logging.info(f"[TARGET] Starting comprehensive research study (stratified by model size)")
         logging.info(f"Model sizes: {self.config.d_models}")
         logging.info(f"Pillar combinations: {len(pillar_combinations)}")
         logging.info(f"Hyperparameter configurations per model: {len(base_hyperparam_grid)}")
@@ -621,7 +635,7 @@ class ResearchAblationStudy:
         
         # Top-level loop for each model size
         for d_model in self.config.d_models:
-            logging.info(f"====== 🔬 Starting Study for d_model = {d_model} 🔬 ======")
+            logging.info(f"====== [RESEARCH] Starting Study for d_model = {d_model} [RESEARCH] ======")
             model_size_results = []
 
             for pillar_combo in pillar_combinations:
@@ -649,13 +663,13 @@ class ResearchAblationStudy:
                         wandb.finish()
                         
                     except Exception as e:
-                        logging.error(f"❌ Error in experiment {pillar_combo} (d_model={d_model}): {e}")
+                        logging.error(f"[ERROR] Error in experiment {pillar_combo} (d_model={d_model}): {e}")
                         if wandb.run is not None:
                             wandb.finish()
                         continue
             
             # After completing all runs for a given d_model, generate its specific report
-            logging.info(f"📊 Generating analysis for d_model = {d_model}")
+            logging.info(f"[ANALYSIS] Generating analysis for d_model = {d_model}")
             self.generate_visualizations_and_reports(model_size_results, f"_d{d_model}")
 
         self.results = all_results
@@ -667,7 +681,7 @@ class ResearchAblationStudy:
         self.save_results()
         self.generate_research_report()
         
-        logging.info("====== ✅ Entire Research Study Completed ✅ ======")
+        logging.info("====== [COMPLETE] Entire Research Study Completed [COMPLETE] ======")
         return all_results
     
     def generate_visualizations_and_reports(self, results: List[ExperimentResult], suffix: str):
@@ -721,7 +735,7 @@ class ResearchAblationStudy:
             with open(stratified_dir / f"stratified_results{suffix}.json", 'w') as f:
                 json.dump(results_data, f, indent=2, default=str)
             
-            logging.info(f"📊 Stratified analysis{suffix} saved to {stratified_dir}")
+            logging.info(f"[ANALYSIS] Stratified analysis{suffix} saved to {stratified_dir}")
             
         finally:
             # Restore original state
@@ -759,7 +773,7 @@ class ResearchAblationStudy:
         # 5. Hyperparameter Impact Analysis
         self._plot_hyperparameter_impact(df)
         
-        logging.info(f"📊 All visualizations saved to {self.output_dir / 'plots'}")
+        logging.info(f"[PLOTS] All visualizations saved to {self.output_dir / 'plots'}")
     
     def _results_to_dataframe(self) -> pd.DataFrame:
         """Convert results to pandas DataFrame."""
@@ -971,7 +985,7 @@ class ResearchAblationStudy:
                        dpi=300, bbox_inches='tight')
             plt.close()
         
-        logging.info("📊 Layer contribution heatmaps generated")
+        logging.info("[PLOTS] Layer contribution heatmaps generated")
     
     def _plot_hyperparameter_impact(self, df: pd.DataFrame):
         """Plot hyperparameter impact on efficiency."""
@@ -1150,7 +1164,7 @@ Key insights:
         with open(self.output_dir / 'RESEARCH_REPORT.md', 'w') as f:
             f.write(report)
         
-        logging.info(f"📊 Research report generated: {self.output_dir / 'RESEARCH_REPORT.md'}")
+        logging.info(f"[REPORT] Research report generated: {self.output_dir / 'RESEARCH_REPORT.md'}")
 
 def parse_args():
     """Parse command line arguments."""
@@ -1170,7 +1184,7 @@ def main():
     """Main entry point."""
     args = parse_args()
     
-    print("🔬 Research-Grade Adaptive Mamba Ablation Study")
+    print("[RESEARCH] Research-Grade Adaptive Mamba Ablation Study")
     print(f"Mode: {args.mode}")
     
     # Configure research study
@@ -1215,18 +1229,18 @@ def main():
     # Check dependencies
     try:
         import wandb
-        print("✅ wandb available")
+        print("[OK] wandb available")
     except ImportError:
-        print("❌ wandb not available")
+        print("[ERROR] wandb not available")
         return
     
     if config.enable_visualization:
         try:
             import matplotlib.pyplot as plt
             import seaborn as sns
-            print("✅ visualization libraries available")
+            print("[OK] visualization libraries available")
         except ImportError:
-            print("❌ visualization libraries not available")
+            print("[ERROR] visualization libraries not available")
             config.enable_visualization = False
     
     # Run study
@@ -1235,7 +1249,7 @@ def main():
     
     print(f"\n🎉 Research study completed!")
     print(f"📁 Results: {study.output_dir}")
-    print(f"📊 Report: {study.output_dir / 'RESEARCH_REPORT.md'}")
+    print(f"[REPORT] Report: {study.output_dir / 'RESEARCH_REPORT.md'}")
     if config.enable_visualization:
         print(f"📈 Plots: {study.output_dir / 'plots'}")
 

@@ -171,11 +171,11 @@ class MaskedLinear(nn.Linear):
         self.total_forward_calls.zero_()
         self.total_active_weights.zero_()
     
-    def to(self, device):
-        """Override to() to ensure mask_generator is moved to the same device."""
-        result = super().to(device)
+    def to(self, *args, **kwargs):
+        """Override to() to ensure mask_generator is moved to the same device with full compatibility."""
+        result = super().to(*args, **kwargs)
         if hasattr(self, 'mask_generator'):
-            self.mask_generator = self.mask_generator.to(device)
+            self.mask_generator = self.mask_generator.to(*args, **kwargs)
         return result
 
 class MaskedConv1d(nn.Conv1d):
@@ -284,11 +284,11 @@ class MaskedConv1d(nn.Conv1d):
             'sparsity_loss': self.get_sparsity_loss().item()
         }
     
-    def to(self, device):
-        """Override to() to ensure mask_generator is moved to the same device."""
-        result = super().to(device)
+    def to(self, *args, **kwargs):
+        """Override to() to ensure mask_generator is moved to the same device with full compatibility."""
+        result = super().to(*args, **kwargs)
         if hasattr(self, 'mask_generator'):
-            self.mask_generator = self.mask_generator.to(device)
+            self.mask_generator = self.mask_generator.to(*args, **kwargs)
         return result
 
 # Utility function to convert existing modules

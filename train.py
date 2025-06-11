@@ -224,30 +224,56 @@ class PEFTManager:
         
         # Step 3: Apply IA³ to mid-importance layers
         if ia3_targets and self.config.enable_ia3:
-            logging.info(f"[PEFT] Applying IA³ to {len(ia3_targets)} mid-importance layers...")
-            try:
-                insert_ia3_modules(model, target_module_names=ia3_targets)
-                logging.info("[PEFT] IA³ application completed.")
-            except Exception as e:
-                logging.error(f"Failed to apply IA³: {e}", exc_info=True)
+            # Filter out problematic layers that mamba_ssm expects to access directly
+            problematic_patterns = ['mixer.in_proj', 'mixer.conv1d', 'mixer.out_proj']
+            safe_ia3_targets = []
+            for target in ia3_targets:
+                is_problematic = any(pattern in target for pattern in problematic_patterns)
+                if not is_problematic:
+                    safe_ia3_targets.append(target)
+                else:
+                    logging.warning(f"Excluding {target} from IA³ (conflicts with mamba_ssm)")
+            
+            if safe_ia3_targets:
+                logging.info(f"[PEFT] Applying IA³ to {len(safe_ia3_targets)} safe mid-importance layers...")
+                try:
+                    insert_ia3_modules(model, target_module_names=safe_ia3_targets)
+                    logging.info("[PEFT] IA³ application completed.")
+                except Exception as e:
+                    logging.error(f"Failed to apply IA³: {e}", exc_info=True)
+            else:
+                logging.warning("[PEFT] No safe layers available for IA³ - all targets are problematic")
         
         # Step 4: Apply LoRA to high-importance layers
         if lora_targets:
-            logging.info(f"[PEFT] Applying LoRA to {len(lora_targets)} high-importance layers...")
-            try:
-                # ### REFACTOR ### Use precise targeting with `target_modules=lora_targets`
-                lora_config = LoraConfig(
-                    r=self.config.peft_r,
-                    lora_alpha=self.config.peft_alpha,
-                    lora_dropout=self.config.peft_dropout,
-                    target_modules=lora_targets,
-                    bias="none",
-                    task_type=TaskType.CAUSAL_LM,
-                )
-                model = get_peft_model(model, lora_config)
-                logging.info("[PEFT] LoRA application completed.")
-            except Exception as e:
-                logging.error(f"Failed to apply LoRA: {e}", exc_info=True)
+            # Filter out problematic layers that mamba_ssm expects to access directly
+            problematic_patterns = ['mixer.in_proj', 'mixer.conv1d', 'mixer.out_proj']
+            safe_lora_targets = []
+            for target in lora_targets:
+                is_problematic = any(pattern in target for pattern in problematic_patterns)
+                if not is_problematic:
+                    safe_lora_targets.append(target)
+                else:
+                    logging.warning(f"Excluding {target} from LoRA (conflicts with mamba_ssm)")
+            
+            if safe_lora_targets:
+                logging.info(f"[PEFT] Applying LoRA to {len(safe_lora_targets)} safe high-importance layers...")
+                try:
+                    # ### REFACTOR ### Use precise targeting with `target_modules=safe_lora_targets`
+                    lora_config = LoraConfig(
+                        r=self.config.peft_r,
+                        lora_alpha=self.config.peft_alpha,
+                        lora_dropout=self.config.peft_dropout,
+                        target_modules=safe_lora_targets,
+                        bias="none",
+                        task_type=TaskType.CAUSAL_LM,
+                    )
+                    model = get_peft_model(model, lora_config)
+                    logging.info("[PEFT] LoRA application completed.")
+                except Exception as e:
+                    logging.error(f"Failed to apply LoRA: {e}", exc_info=True)
+            else:
+                logging.warning("[PEFT] No safe layers available for LoRA - all targets are problematic")
         
         # ### REFACTOR ### Log efficiency gains *after* all modifications
         total_params = sum(p.numel() for p in model.parameters())
@@ -333,6 +359,8 @@ class AdaptiveMambaTrainer:
         
         self.global_step = 0
         self.current_epoch = 0
+        self.best_loss = float('inf')
+        self.best_perplexity = float('inf')
         
         logging.info(f"Trainer initialized. Device: {self.device}")
     
@@ -500,7 +528,17 @@ class AdaptiveMambaTrainer:
                 total_loss_step, _ = self.compute_loss(logits, labels, reg_loss)
                 total_loss += total_loss_step.item()
                 total_steps += 1
-        return {'eval_loss': total_loss / total_steps if total_steps > 0 else 0.0}
+        
+        eval_loss = total_loss / total_steps if total_steps > 0 else 0.0
+        eval_perplexity = torch.exp(torch.tensor(eval_loss)).item()
+        
+        # Update best metrics
+        if eval_loss < self.best_loss:
+            self.best_loss = eval_loss
+        if eval_perplexity < self.best_perplexity:
+            self.best_perplexity = eval_perplexity
+            
+        return {'eval_loss': eval_loss, 'eval_perplexity': eval_perplexity}
 
     def save_checkpoint(self, path: str):
         """Save model checkpoint."""
@@ -525,6 +563,13 @@ class AdaptiveMambaTrainer:
             for batch in train_dataloader:
                 metrics = self.train_step(batch)
                 self.log_metrics(metrics, prefix="train")
+                
+                # Track best loss from training if no evaluation
+                if 'loss' in metrics and 'total' in metrics['loss']:
+                    train_loss = metrics['loss']['total']
+                    if train_loss < self.best_loss:
+                        self.best_loss = train_loss
+                        self.best_perplexity = torch.exp(torch.tensor(train_loss)).item()
                 
                 if (eval_dataloader and self.global_step % self.config.eval_interval == 0 and self.global_step > 0):
                     eval_metrics = self.evaluate(eval_dataloader)

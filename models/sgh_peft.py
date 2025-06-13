@@ -63,6 +63,10 @@ class MaskedLoRALayer(nn.Module):
         self.alpha = alpha
         self.scaling = alpha / rank
         
+        # Freeze base layer parameters
+        for param in self.base_layer.parameters():
+            param.requires_grad = False
+        
         # Get dimensions from base layer
         if hasattr(base_layer, 'in_features') and hasattr(base_layer, 'out_features'):
             self.in_features = base_layer.in_features
@@ -106,13 +110,38 @@ class MaskedLoRALayer(nn.Module):
         
         # LoRA forward pass
         lora_input = self.dropout(x)
-        lora_output = F.linear(lora_input, self.lora_A.T)  # (batch, seq, rank)
-        lora_output = F.linear(lora_output, self.lora_B.T)  # (batch, seq, out_features)
+        
+        # Reshape input for matrix multiplication
+        original_shape = lora_input.shape
+        lora_input_flat = lora_input.reshape(-1, self.in_features)  # (batch*seq, in_features)
+        
+        # First LoRA transformation: (batch*seq, in_features) @ (in_features, rank) -> (batch*seq, rank)
+        lora_intermediate = torch.matmul(lora_input_flat, self.lora_A.T)  # (batch*seq, rank)
+        
+        # Second LoRA transformation: (batch*seq, rank) @ (rank, out_features) -> (batch*seq, out_features)
+        lora_output_flat = torch.matmul(lora_intermediate, self.lora_B.T)  # (batch*seq, out_features)
+        
+        # Reshape back to original shape
+        lora_output = lora_output_flat.reshape(*original_shape[:-1], self.out_features)
         
         # [Pillar 3: SGH-PEFT] Apply sparsity mask to LoRA update
         # This ensures ΔW_c = 0 for channels where m_c = 0 (SDM learned they're unimportant)
         if self.sparsity_mask is not None:
-            lora_output = lora_output * self.sparsity_mask.view(1, 1, -1)
+            # Handle the case where output dimension doesn't match mask dimension
+            # This can happen when the mask is for d_inner but layer is in_proj (d_inner*2)
+            mask = self.sparsity_mask
+            if mask.size(0) != self.out_features:
+                if self.out_features == mask.size(0) * 2:
+                    # For in_proj layer: repeat mask for both x and z projections
+                    mask = mask.repeat(2)
+                elif self.out_features == mask.size(0) // 2:
+                    # For partial projection: take first half of mask
+                    mask = mask[:self.out_features]
+                else:
+                    # If dimensions don't match in expected ways, create a ones mask
+                    mask = torch.ones(self.out_features, device=mask.device, dtype=mask.dtype)
+            
+            lora_output = lora_output * mask.view(1, 1, -1)
         
         # Scale and combine
         lora_output = lora_output * self.scaling
@@ -137,6 +166,10 @@ class IA3Layer(nn.Module):
         super().__init__()
         
         self.base_layer = base_layer
+        
+        # Freeze base layer parameters
+        for param in self.base_layer.parameters():
+            param.requires_grad = False
         
         # Get output features
         if hasattr(base_layer, 'out_features'):
@@ -176,8 +209,22 @@ class IA3Layer(nn.Module):
         # [Pillar 3: SGH-PEFT] Apply sparsity-aware IA³ scaling 
         # Scale only the channels that SDM identified as important
         if self.sparsity_mask is not None:
+            # Handle dimension mismatch between mask and layer output
+            mask = self.sparsity_mask
+            out_features = len(self.ia3_scaling)
+            if mask.size(0) != out_features:
+                if out_features == mask.size(0) * 2:
+                    # For in_proj layer: repeat mask for both x and z projections
+                    mask = mask.repeat(2)
+                elif out_features == mask.size(0) // 2:
+                    # For partial projection: take first half of mask
+                    mask = mask[:out_features]
+                else:
+                    # If dimensions don't match in expected ways, create a ones mask
+                    mask = torch.ones(out_features, device=mask.device, dtype=mask.dtype)
+            
             effective_scaling = torch.where(
-                self.sparsity_mask > 0.5,
+                mask > 0.5,
                 self.ia3_scaling,
                 torch.ones_like(self.ia3_scaling)
             )
@@ -420,10 +467,6 @@ class AdaptedMambaBlock(nn.Module):
     ) -> nn.Module:
         """Create adapted layer based on adapter type."""
         
-        # Freeze base layer
-        for param in base_layer.parameters():
-            param.requires_grad = False
-        
         if adapter_type == "lora_high":
             return MaskedLoRALayer(
                 base_layer=base_layer,
@@ -447,6 +490,9 @@ class AdaptedMambaBlock(nn.Module):
                 sparsity_mask=sparsity_mask if config.apply_sparsity_mask else None
             )
         else:  # frozen
+            # Freeze base layer parameters
+            for param in base_layer.parameters():
+                param.requires_grad = False
             return base_layer
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:

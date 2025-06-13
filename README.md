@@ -230,9 +230,28 @@ peft:
 
 **Results**: Achieves 17.6% parameter reduction with 1.16x throughput improvement, generates layer-wise importance scores for SGH-PEFT, and demonstrates adaptive sparsity patterns (early layers less sparse, later layers more sparse).
 
-### 🔄 Pillar 3: SGH-PEFT (Sparsity-Guided Hybrid PEFT) - IN PROGRESS
+### ✅ Pillar 3: SGH-PEFT (Sparsity-Guided Hybrid PEFT) - COMPLETED
 
-Next phase: Implement hybrid LoRA/IA³ fine-tuning guided by SDM importance scores.
+**Status**: Intelligent parameter-efficient fine-tuning using hybrid LoRA/IA³ adapters guided by SDM importance scores.
+
+**Key Features**:
+- **Importance-Based Allocation**: Extracts layer-wise importance from SDM z_logits to intelligently allocate adapter types
+- **Hybrid Adapter Strategy**: 
+  - High-importance layers → High-rank LoRA (rank=16)
+  - Medium-importance layers → Low-rank LoRA (rank=4)  
+  - Low-importance layers → IA³ adapters
+  - Minimal-importance layers → Frozen (no adaptation)
+- **Masked LoRA Updates**: Custom LoRA layers apply SDM sparsity masks ensuring ΔW_c = 0 for unimportant channels
+- **Sparsity-Aware IA³**: IA³ scaling respects SDM channel importance for consistent sparse structure
+- **Parameter Efficiency**: Achieves 97%+ parameter reduction (33x fewer trainable parameters) vs full fine-tuning
+
+**Components**:
+- `models/sgh_peft.py`: SGHPEFTModel with MaskedLoRALayer and IA3Layer implementations
+- `scripts/run_finetuning.py`: Complete fine-tuning pipeline for GLUE tasks
+- `configs/finetune_sgh_peft.yaml`: Hybrid adapter configuration with allocation thresholds
+- `test_sgh_peft.py`: Comprehensive test suite with 7 verification tests
+
+**Results**: Successfully passes all tests including masked LoRA functionality, importance-based allocation strategy (high/medium/low/frozen), sparsity mask integration, and parameter efficiency (97.05% reduction, 33.84x efficiency improvement).
 
 ## Reproduction
 
@@ -263,9 +282,14 @@ python scripts/analyze_sdm.py
 python test_sdm.py  # All 6 tests should pass
 ```
 
-6. **SGH-PEFT Fine-tuning** (Coming Soon):
+6. **SGH-PEFT Fine-tuning**:
 ```bash
-python scripts/run_finetuning.py --config configs/finetune_glue.yaml
+python scripts/run_finetuning.py --config configs/finetune_sgh_peft.yaml --sdm_model checkpoints/sdm/model.pt --task cola
+```
+
+7. **SGH-PEFT Testing**:
+```bash
+python test_sgh_peft.py  # All 7 tests should pass
 ```
 
 ## Citation

@@ -111,24 +111,24 @@ def main():
     
     # Get training parameters with nested config support
     if 'pretrain' in training_config:
-        batch_size = pretrain_config.get('batch_size', 32)
-        learning_rate = pretrain_config.get('learning_rate', 1e-4)
-        weight_decay = pretrain_config.get('weight_decay', 0.1)
-        warmup_steps = pretrain_config.get('warmup_steps', 1000)
-        max_grad_norm = pretrain_config.get('max_grad_norm', 1.0)
-        max_steps = pretrain_config.get('max_epochs', 20) * 1000  # Convert epochs to steps estimate
+        batch_size = int(pretrain_config.get('batch_size', 32))
+        learning_rate = float(pretrain_config.get('learning_rate', 1e-4))
+        weight_decay = float(pretrain_config.get('weight_decay', 0.1))
+        warmup_steps = int(pretrain_config.get('warmup_steps', 1000))
+        max_grad_norm = float(pretrain_config.get('max_grad_norm', 1.0))
+        max_steps = int(pretrain_config.get('max_epochs', 20)) * 1000  # Convert epochs to steps estimate
     else:
-        batch_size = training_config.get('batch_size', 32)
-        learning_rate = training_config.get('learning_rate', 1e-4)
-        weight_decay = training_config.get('weight_decay', 0.1)
-        warmup_steps = training_config.get('warmup_steps', 1000)
-        max_grad_norm = training_config.get('max_grad_norm', 1.0)
-        max_steps = training_config.get('max_steps', 20000)
+        batch_size = int(training_config.get('batch_size', 32))
+        learning_rate = float(training_config.get('learning_rate', 1e-4))
+        weight_decay = float(training_config.get('weight_decay', 0.1))
+        warmup_steps = int(training_config.get('warmup_steps', 1000))
+        max_grad_norm = float(training_config.get('max_grad_norm', 1.0))
+        max_steps = int(training_config.get('max_steps', 20000))
     
     # Get data configuration
     data_config = config.get('data', {})
-    max_length = data_config.get('max_length', 1024)
-    num_workers = config.get('system', {}).get('dataloader_num_workers', data_config.get('num_workers', 4))
+    max_length = int(data_config.get('max_length', 1024))
+    num_workers = int(config.get('system', {}).get('dataloader_num_workers', data_config.get('num_workers', 4)))
     
     # Log model information
     if accelerator.is_main_process:

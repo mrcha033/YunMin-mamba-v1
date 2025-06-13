@@ -147,7 +147,7 @@ def main():
             logger.warning(f"FLOPs counting failed: {e}")
     
     train_dataloader = get_wiktext103_dataloader(
-        tokenizer=tokenizer,
+        tokenizer_name="gpt2",
         batch_size=batch_size,
         max_length=max_length,
         split="train",
@@ -155,7 +155,7 @@ def main():
     )
     
     val_dataloader = get_wiktext103_dataloader(
-        tokenizer=tokenizer,
+        tokenizer_name="gpt2",
         batch_size=batch_size,
         max_length=max_length,
         split="validation",

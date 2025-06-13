@@ -62,8 +62,18 @@ def main():
     config = load_config(args.config)
     
     # Initialize accelerator for distributed training
+    # Handle nested config structure
+    training_config = config.get('training', {})
+    if 'pretrain' in training_config:
+        # New nested structure
+        pretrain_config = training_config['pretrain']
+        gradient_accumulation_steps = pretrain_config.get('gradient_accumulation_steps', 1)
+    else:
+        # Legacy flat structure
+        gradient_accumulation_steps = training_config.get('gradient_accumulation_steps', 1)
+    
     accelerator = Accelerator(
-        gradient_accumulation_steps=config['training']['gradient_accumulation_steps'],
+        gradient_accumulation_steps=gradient_accumulation_steps,
         log_with="wandb" if config['logging'].get('wandb_project') else None
     )
     
@@ -110,39 +120,59 @@ def main():
         
         # Count FLOPs (on CPU to avoid memory issues)
         try:
-            flop_info = count_flops(model, (1, config['data']['max_length']), device="cpu")
+            flop_info = count_flops(model, (1, max_length), device="cpu")
             logger.info(f"FLOPs analysis: {flop_info['total_flops']:,}")
         except Exception as e:
             logger.warning(f"FLOPs counting failed: {e}")
     
+    # Get training parameters with nested config support
+    if 'pretrain' in training_config:
+        batch_size = pretrain_config.get('batch_size', 32)
+        learning_rate = pretrain_config.get('learning_rate', 1e-4)
+        weight_decay = pretrain_config.get('weight_decay', 0.1)
+        warmup_steps = pretrain_config.get('warmup_steps', 1000)
+        max_grad_norm = pretrain_config.get('max_grad_norm', 1.0)
+        max_steps = pretrain_config.get('max_epochs', 20) * 1000  # Convert epochs to steps estimate
+    else:
+        batch_size = training_config.get('batch_size', 32)
+        learning_rate = training_config.get('learning_rate', 1e-4)
+        weight_decay = training_config.get('weight_decay', 0.1)
+        warmup_steps = training_config.get('warmup_steps', 1000)
+        max_grad_norm = training_config.get('max_grad_norm', 1.0)
+        max_steps = training_config.get('max_steps', 20000)
+    
     # Create data loaders
+    data_config = config.get('data', {})
+    max_length = data_config.get('max_length', 1024)
+    num_workers = config.get('system', {}).get('dataloader_num_workers', data_config.get('num_workers', 4))
+    
     train_dataloader = get_wiktext103_dataloader(
         tokenizer=tokenizer,
-        batch_size=config['training']['batch_size'],
-        max_length=config['data']['max_length'],
+        batch_size=batch_size,
+        max_length=max_length,
         split="train",
-        num_workers=config['data']['num_workers']
+        num_workers=num_workers
     )
     
     val_dataloader = get_wiktext103_dataloader(
         tokenizer=tokenizer,
-        batch_size=config['training']['batch_size'],
-        max_length=config['data']['max_length'],
+        batch_size=batch_size,
+        max_length=max_length,
         split="validation",
-        num_workers=config['data']['num_workers']
+        num_workers=num_workers
     )
     
     # Initialize optimizer and scheduler
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=config['training']['learning_rate'],
-        weight_decay=config['training']['weight_decay']
+        lr=learning_rate,
+        weight_decay=weight_decay
     )
     
-    num_training_steps = config['training']['max_steps']
+    num_training_steps = max_steps
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=config['training']['warmup_steps'],
+        num_warmup_steps=warmup_steps,
         num_training_steps=num_training_steps
     )
     
@@ -176,7 +206,7 @@ def main():
                 
                 # Gradient clipping
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(model.parameters(), config['training']['max_grad_norm'])
+                    accelerator.clip_grad_norm_(model.parameters(), max_grad_norm)
                 
                 optimizer.step()
                 scheduler.step()
@@ -187,8 +217,10 @@ def main():
                 running_loss += loss.item()
                 
                 # Logging
-                if global_step % config['logging']['log_interval'] == 0:
-                    avg_loss = running_loss / config['logging']['log_interval']
+                logging_config = config.get('logging', {})
+                log_interval = logging_config.get('log_interval', 100)
+                if global_step % log_interval == 0:
+                    avg_loss = running_loss / log_interval
                     logger.info(f"Step {global_step}, Loss: {avg_loss:.4f}, LR: {scheduler.get_last_lr()[0]:.2e}")
                     
                     if accelerator.is_main_process and config['logging'].get('wandb_project'):
@@ -202,7 +234,8 @@ def main():
                     running_loss = 0.0
                 
                 # Evaluation
-                if global_step % config['logging']['eval_interval'] == 0:
+                eval_interval = logging_config.get('eval_interval', 1000)
+                if global_step % eval_interval == 0:
                     model.eval()
                     val_loss = 0.0
                     val_steps = 0
@@ -233,7 +266,8 @@ def main():
                     model.train()
                 
                 # Save checkpoint
-                if global_step % config['logging']['save_interval'] == 0:
+                save_interval = logging_config.get('save_interval', 5000)
+                if global_step % save_interval == 0:
                     if accelerator.is_main_process:
                         save_checkpoint(
                             accelerator.unwrap_model(model),
@@ -245,7 +279,7 @@ def main():
                         )
                 
                 # Check if training is complete
-                if global_step >= config['training']['max_steps']:
+                if global_step >= num_training_steps:
                     logger.info("Training completed!")
                     
                     # Final checkpoint

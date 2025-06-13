@@ -1,0 +1,41 @@
+# Hyperparameters for SGH-PEFT (Phase B)
+model:
+  base_model_path: "./checkpoints/pretrained_model"
+  max_length: 512
+
+training:
+  batch_size: 16
+  learning_rate: 3e-4
+  num_epochs: 3
+  warmup_ratio: 0.1
+  weight_decay: 0.01
+  gradient_accumulation_steps: 2
+
+data:
+  tasks: ["cola", "sst2", "mrpc", "qqp", "mnli", "qnli", "rte", "wnli"]
+  validation_split: 0.1
+
+# SGH-PEFT configuration
+peft:
+  # LoRA configuration for high-importance layers
+  lora:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.1
+    target_modules: ["in_proj", "out_proj"]
+  
+  # IA³ configuration for low-importance layers  
+  ia3:
+    target_modules: ["in_proj", "out_proj"]
+    feedforward_modules: ["conv1d"]
+  
+  # Importance scoring parameters
+  importance_scoring:
+    method: "gradient_norm"
+    threshold: 0.3  # Layers above this get LoRA, below get IA³
+
+logging:
+  log_interval: 50
+  eval_interval: 500
+  wandb_project: "hardware-data-parameter-codesign"
+  run_name: "sgh_peft_glue" 

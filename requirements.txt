@@ -1,45 +1,11 @@
-# Core ML Framework
 torch>=2.0.0
-numpy>=1.21.0
-
-# PEFT (Parameter Efficient Fine-Tuning)
+transformers>=4.30.0
 peft>=0.4.0
-
-# Mamba State Space Models (Optional - fallback implementation available)
-# Uncomment the line below if you want to use the official optimized Mamba implementation
-# mamba-ssm>=1.0.0
-
-# Transformers and NLP
-transformers>=4.21.0
-datasets>=2.0.0
-
-# Data Analysis and Visualization
-pandas>=1.5.0
-matplotlib>=3.5.0
-seaborn>=0.11.0
-fbcore>=0.1.0
-thop>=0.1.0
-ptflops>=0.1.0
-
-# Logging and Experiment Tracking
-wandb>=0.13.0
-
-# Utilities
-tqdm>=4.64.0
-pathlib2>=2.3.0; python_version<"3.4"
-
-# Development and Testing (optional)
-jupyter>=1.0.0
-ipykernel>=6.0.0
-
-# Additional scientific computing
-scipy>=1.9.0
-
-# For ROUGE metrics in evaluation
-rouge-score>=0.1.0
-
-# For tokenization
-tokenizers>=0.13.0
-
-# Optional: For better performance
-accelerate>=0.20.0 
+fvcore>=0.1.5
+datasets>=2.12.0
+accelerate>=0.20.0
+wandb>=0.15.0
+pyyaml>=6.0
+numpy>=1.24.0
+matplotlib>=3.7.0
+seaborn>=0.12.0 

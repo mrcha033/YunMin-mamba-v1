@@ -2,7 +2,7 @@
 # Production Requirements for Full-Scale Validation
 
 # Core Deep Learning Framework
-torch>=2.0.0
+torch==2.1.1
 torchvision>=0.15.0
 torchaudio>=2.0.0
 

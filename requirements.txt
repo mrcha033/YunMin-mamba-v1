@@ -56,10 +56,10 @@ deepspeed==0.14.0  # Optional for large-scale training
 fairscale>=0.4.13  # Optional for model parallelism
 
 # Optional: Advanced Optimizations
-triton==2.1.0  # Optional for custom CUDA kernels
+triton==2.2.0  # Optional for custom CUDA kernels
 flash-attn>=2.0.0  # Optional for memory-efficient attention
 
 # System Requirements
-# Python >= 3.8
-# CUDA >= 11.8 (for GPU support)
+# Python = 3.10
+# CUDA = 12.1 (for GPU support)
 # GPU Memory >= 40GB (recommended for 370M models) 

@@ -61,6 +61,10 @@ def main():
     args = parse_args()
     config = load_config(args.config)
     
+    # Set memory optimization environment variables
+    import os
+    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
+    
     # Initialize accelerator for distributed training
     # Handle nested config structure
     training_config = config.get('training', {})
@@ -72,8 +76,13 @@ def main():
         # Legacy flat structure
         gradient_accumulation_steps = training_config.get('gradient_accumulation_steps', 1)
     
+    # Get system configuration for memory optimization
+    system_config = config.get('system', {})
+    mixed_precision = system_config.get('mixed_precision', 'bf16')
+    
     accelerator = Accelerator(
-        gradient_accumulation_steps=gradient_accumulation_steps,
+        gradient_accumulation_steps=actual_gradient_accumulation_steps,
+        mixed_precision=mixed_precision,
         log_with="wandb" if config['logging'].get('wandb_project') else None
     )
     
@@ -109,25 +118,57 @@ def main():
         d_conv=config['model']['d_conv']
     )
     
+    # Enable gradient checkpointing for memory efficiency
+    if system_config.get('gradient_checkpointing', False):
+        if hasattr(model, 'gradient_checkpointing_enable'):
+            model.gradient_checkpointing_enable()
+        else:
+            logger.info("Gradient checkpointing not supported by model, using torch.utils.checkpoint manually")
+    
     # Get training parameters with nested config support
     if 'pretrain' in training_config:
-        batch_size = int(pretrain_config.get('batch_size', 32))
+        conceptual_batch_size = int(pretrain_config.get('batch_size', 32))
+        micro_batch_size = int(pretrain_config.get('micro_batch_size', 8))
         learning_rate = float(pretrain_config.get('learning_rate', 1e-4))
         weight_decay = float(pretrain_config.get('weight_decay', 0.1))
         warmup_steps = int(pretrain_config.get('warmup_steps', 1000))
         max_grad_norm = float(pretrain_config.get('max_grad_norm', 1.0))
         max_steps = int(pretrain_config.get('max_epochs', 20)) * 1000  # Convert epochs to steps estimate
     else:
-        batch_size = int(training_config.get('batch_size', 32))
+        conceptual_batch_size = int(training_config.get('batch_size', 32))
+        micro_batch_size = int(training_config.get('micro_batch_size', 8))
         learning_rate = float(training_config.get('learning_rate', 1e-4))
         weight_decay = float(training_config.get('weight_decay', 0.1))
         warmup_steps = int(training_config.get('warmup_steps', 1000))
         max_grad_norm = float(training_config.get('max_grad_norm', 1.0))
         max_steps = int(training_config.get('max_steps', 20000))
     
-    # Get data configuration
+    # Memory optimization: start with smaller micro batch size if needed
+    try:
+        # Try to reduce micro batch size for memory constraints
+        if micro_batch_size > 4:
+            micro_batch_size = 4
+            logger.info(f"Reducing micro batch size to {micro_batch_size} for memory optimization")
+        
+        # Calculate gradient accumulation steps
+        actual_gradient_accumulation_steps = max(1, conceptual_batch_size // micro_batch_size)
+        logger.info(f"Conceptual batch size: {conceptual_batch_size}, Micro batch size: {micro_batch_size}")
+        logger.info(f"Gradient accumulation steps: {actual_gradient_accumulation_steps}")
+        
+    except Exception as e:
+        logger.warning(f"Error calculating batch sizes: {e}")
+        micro_batch_size = 2
+        actual_gradient_accumulation_steps = conceptual_batch_size // micro_batch_size
+    
+    # Get data configuration with memory optimization
     data_config = config.get('data', {})
-    max_length = int(data_config.get('max_length', 1024))
+    configured_max_length = int(data_config.get('max_length', 1024))
+    
+    # Memory optimization: reduce sequence length if needed
+    max_length = min(configured_max_length, 512)  # Start with shorter sequences
+    if max_length < configured_max_length:
+        logger.info(f"Reducing sequence length from {configured_max_length} to {max_length} for memory optimization")
+    
     num_workers = int(config.get('system', {}).get('dataloader_num_workers', data_config.get('num_workers', 4)))
     
     # Log model information
@@ -148,7 +189,7 @@ def main():
     
     train_dataloader = get_wiktext103_dataloader(
         tokenizer_name="gpt2",
-        batch_size=batch_size,
+        batch_size=micro_batch_size,
         max_length=max_length,
         split="train",
         num_workers=num_workers
@@ -156,7 +197,7 @@ def main():
     
     val_dataloader = get_wiktext103_dataloader(
         tokenizer_name="gpt2",
-        batch_size=batch_size,
+        batch_size=micro_batch_size,
         max_length=max_length,
         split="validation",
         num_workers=num_workers
@@ -215,6 +256,10 @@ def main():
             if accelerator.sync_gradients:
                 global_step += 1
                 running_loss += loss.item()
+                
+                # Memory management
+                if global_step % 100 == 0:  # Clear cache every 100 steps
+                    torch.cuda.empty_cache()
                 
                 # Logging
                 logging_config = config.get('logging', {})

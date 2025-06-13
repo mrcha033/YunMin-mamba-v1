@@ -1,11 +1,65 @@
+# Hardware-Data-Parameter Co-Design Framework
+# Production Requirements for Full-Scale Validation
+
+# Core Deep Learning Framework
 torch>=2.0.0
+torchvision>=0.15.0
+torchaudio>=2.0.0
+
+# Transformers and Model Libraries
 transformers>=4.30.0
-peft>=0.4.0
-fvcore>=0.1.5
-datasets>=2.12.0
+tokenizers>=0.13.0
 accelerate>=0.20.0
-wandb>=0.15.0
-pyyaml>=6.0
+
+# Dataset and Data Processing
+datasets>=2.12.0
+huggingface-hub>=0.15.0
+
+# Scientific Computing
 numpy>=1.24.0
+scipy>=1.10.0
+scikit-learn>=1.3.0
+
+# Visualization and Plotting
 matplotlib>=3.7.0
-seaborn>=0.12.0 
+seaborn>=0.12.0
+plotly>=5.14.0
+
+# Configuration and Utilities
+pyyaml>=6.0
+omegaconf>=2.3.0
+hydra-core>=1.3.0
+
+# Progress and Logging
+tqdm>=4.65.0
+wandb>=0.15.0
+tensorboard>=2.13.0
+
+# Statistical Analysis
+pandas>=2.0.0
+statsmodels>=0.14.0
+
+# Memory and Performance Profiling
+psutil>=5.9.0
+py3nvml>=0.2.7
+gpustat>=1.1.0
+
+# Development and Testing
+pytest>=7.3.0
+pytest-cov>=4.1.0
+black>=23.3.0
+flake8>=6.0.0
+isort>=5.12.0
+
+# Optional: Distributed Training
+deepspeed>=0.9.0  # Optional for large-scale training
+fairscale>=0.4.13  # Optional for model parallelism
+
+# Optional: Advanced Optimizations
+triton>=2.0.0  # Optional for custom CUDA kernels
+flash-attn>=2.0.0  # Optional for memory-efficient attention
+
+# System Requirements
+# Python >= 3.8
+# CUDA >= 11.8 (for GPU support)
+# GPU Memory >= 40GB (recommended for 370M models) 

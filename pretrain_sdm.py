@@ -170,6 +170,12 @@ def parse_args():
                         help="Path to checkpoint to resume from")
     parser.add_argument("--base_model", type=str, default=None,
                         help="Path to base model (M_base or M_CSP) to initialize from")
+    parser.add_argument("--init_from", type=str, default=None,
+                        help="Path to checkpoint to initialize from (alias for base_model)")
+    parser.add_argument("--experiment_name", type=str, default=None,
+                        help="Name of the experiment for tracking")
+    parser.add_argument("--distributed", action="store_true",
+                        help="Enable distributed training")
     return parser.parse_args()
 
 
@@ -198,10 +204,11 @@ def main():
     
     # Setup W&B logging
     if accelerator.is_main_process and config['logging'].get('wandb_project'):
+        run_name = args.experiment_name if args.experiment_name else config['logging'].get('run_name', 'sdm_pretrain')
         setup_wandb(
             config=config,
             project=config['logging']['wandb_project'],
-            run_name=config['logging'].get('run_name', 'sdm_pretrain')
+            run_name=run_name
         )
     
     # Create output directory
@@ -222,11 +229,12 @@ def main():
         gumbel_temp=config['sdm']['initial_temperature']
     )
     
-    # Load base model if specified
-    if args.base_model:
+    # Load base model if specified (init_from takes precedence over base_model)
+    init_model_path = args.init_from or args.base_model
+    if init_model_path:
         try:
-            logger.info(f"Loading base model from {args.base_model}")
-            base_checkpoint = torch.load(args.base_model, map_location='cpu')
+            logger.info(f"Loading base model from {init_model_path}")
+            base_checkpoint = torch.load(init_model_path, map_location='cpu')
             
             # Handle different checkpoint formats
             if 'model_state_dict' in base_checkpoint:

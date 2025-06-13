@@ -26,6 +26,10 @@ def parse_args():
                         help="Output directory for checkpoints")
     parser.add_argument("--resume_from", type=str, default=None, 
                         help="Path to checkpoint to resume from")
+    parser.add_argument("--experiment_name", type=str, default=None,
+                        help="Name of the experiment for tracking")
+    parser.add_argument("--distributed", action="store_true",
+                        help="Enable distributed training")
     return parser.parse_args()
 
 
@@ -71,10 +75,11 @@ def main():
     
     # Setup W&B logging
     if accelerator.is_main_process and config['logging'].get('wandb_project'):
+        run_name = args.experiment_name if args.experiment_name else config['logging']['run_name']
         setup_wandb(
             config=config,
             project=config['logging']['wandb_project'],
-            run_name=config['logging']['run_name']
+            run_name=run_name
         )
     
     # Create output directory

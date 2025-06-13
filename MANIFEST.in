@@ -1,0 +1,56 @@
+# Hardware-Data-Parameter Co-Design Framework
+# Manifest file for package distribution
+
+# Include essential documentation
+include README.md
+include LICENSE
+include PRODUCTION_READINESS_REPORT.md
+include requirements.txt
+include pyproject.toml
+include setup.py
+
+# Include configuration files
+recursive-include configs *.yaml *.yml
+recursive-include data *.py
+
+# Include scripts
+recursive-include scripts *.py
+
+# Include models and utilities
+recursive-include models *.py
+recursive-include utils *.py
+
+# Include demo and validation files
+include demo_*.py
+include run_full_experiment.sh
+
+# Exclude development and build artifacts
+exclude .gitignore
+exclude .flake8
+exclude .pre-commit-config.yaml
+recursive-exclude * __pycache__
+recursive-exclude * *.py[co]
+recursive-exclude * *.so
+recursive-exclude * .DS_Store
+
+# Exclude experiment outputs
+recursive-exclude experiments *
+recursive-exclude checkpoints *
+recursive-exclude results *
+recursive-exclude full_scale_demo_results *
+recursive-exclude demo_validation_results *
+
+# Exclude test files
+recursive-exclude tests *
+exclude test_*.py
+exclude *_test.py
+
+# Exclude development tools
+exclude .coverage
+exclude .pytest_cache
+recursive-exclude .pytest_cache *
+recursive-exclude .mypy_cache *
+recursive-exclude .tox *
+
+# Include version file if it exists
+include src/__init__.py 

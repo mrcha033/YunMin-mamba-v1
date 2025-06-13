@@ -24,7 +24,7 @@ import sys
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models.sdm_ssm import SDM_SSM, SDM_MambaBlock
-from data.wiktext103 import get_wiktext103_dataloader
+from data.wikitext103 import get_wiktext103_dataloader
 from utils.profiling import count_parameters
 
 

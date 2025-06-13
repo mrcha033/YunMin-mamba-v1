@@ -1,0 +1,158 @@
+# Mamba-130M Configuration
+# Based on original Mamba paper specifications for 130M parameter model
+
+model:
+  # Core architecture parameters
+  d_model: 768                    # Model dimension
+  n_layer: 12                     # Number of transformer layers
+  vocab_size: 50257               # GPT-2 vocabulary size
+  
+  # SSM-specific parameters
+  d_state: 16                     # SSM state dimension
+  d_conv: 4                       # 1D convolution kernel size
+  expand: 2                       # Expansion factor for inner dimension
+  dt_rank: "auto"                 # Delta rank (auto = ceil(d_model/16))
+  
+  # Additional parameters
+  bias: false                     # Use bias in linear layers
+  conv_bias: true                 # Use bias in conv layers
+  pscan: true                     # Use parallel scan
+  
+  # Initialization
+  initializer_range: 0.02         # Standard deviation for weight initialization
+  rescale_prenorm_residual: true  # Rescale prenorm residual
+  residual_in_fp32: true          # Keep residuals in fp32
+  fused_add_norm: true            # Use fused add norm
+  
+  # Model size validation
+  expected_params: 130_000_000    # Expected parameter count for validation
+
+training:
+  # Phase A: Pre-training hyperparameters
+  pretrain:
+    optimizer: "AdamW"
+    learning_rate: 2e-4
+    weight_decay: 0.1
+    beta1: 0.9
+    beta2: 0.95
+    eps: 1e-8
+    
+    # Training schedule
+    batch_size: 128               # Global batch size
+    micro_batch_size: 8           # Per-device batch size
+    gradient_accumulation_steps: 16  # 128 / 8 = 16
+    max_epochs: 20
+    warmup_steps_ratio: 0.1       # 10% of total steps
+    
+    # Regularization
+    max_grad_norm: 1.0
+    dropout: 0.0
+    
+    # Learning rate schedule
+    lr_scheduler: "cosine"
+    min_lr_ratio: 0.1             # min_lr = 0.1 * learning_rate
+    
+  # Phase B: Fine-tuning hyperparameters  
+  finetune:
+    optimizer: "AdamW"
+    learning_rate: 1e-4
+    weight_decay: 0.01
+    
+    # Task-specific settings
+    batch_size: 32
+    micro_batch_size: 8
+    gradient_accumulation_steps: 4
+    
+    # Task-specific epochs
+    epochs:
+      sst2: 5
+      mnli: 10
+      qnli: 5
+      mrpc: 10
+      cola: 10
+      stsb: 10
+      qqp: 5
+      rte: 10
+      wnli: 10
+    
+    # Early stopping
+    early_stopping_patience: 3
+    early_stopping_threshold: 1e-4
+
+# SDM-specific configuration
+sdm:
+  lambda_sparsity: 0.01           # Sparsity regularization weight
+  gumbel_temp_start: 5.0          # Initial Gumbel temperature
+  gumbel_temp_end: 0.1            # Final Gumbel temperature
+  temp_anneal_steps_ratio: 0.8    # Anneal over 80% of training
+  target_sparsity: 0.3            # Target 30% sparsity
+  
+# SGH-PEFT configuration
+sgh_peft:
+  # LoRA parameters
+  lora_high_rank: 16
+  lora_low_rank: 4
+  lora_alpha_factor: 2
+  lora_dropout: 0.05
+  
+  # Importance thresholds
+  high_importance_mean_threshold: 0.5
+  high_importance_active_threshold: 60.0
+  medium_importance_mean_threshold: 0.0
+  medium_importance_active_threshold: 40.0
+  low_importance_mean_threshold: -0.5
+  
+  # Adaptation settings
+  apply_sparsity_mask: true
+  freeze_base_model: true
+
+# Hardware and system configuration
+system:
+  # Target hardware
+  device: "cuda"
+  mixed_precision: "bf16"         # Use bfloat16 for A100
+  compile: true                   # Use torch.compile for optimization
+  
+  # Memory optimization
+  gradient_checkpointing: true
+  dataloader_num_workers: 4
+  pin_memory: true
+  
+  # Distributed training
+  ddp: true                       # Use DistributedDataParallel
+  find_unused_parameters: false
+  
+# Evaluation configuration
+evaluation:
+  # Validation frequency
+  eval_interval: 1000             # Evaluate every 1000 steps
+  save_interval: 5000             # Save checkpoint every 5000 steps
+  
+  # Metrics
+  compute_flops: true
+  profile_memory: true
+  measure_latency: true
+  
+  # Statistical testing
+  num_seeds: 5                    # Run with 5 different seeds
+  confidence_level: 0.95          # 95% confidence intervals
+
+# Logging and checkpointing
+logging:
+  project_name: "mamba-130m-codesign"
+  experiment_name: "full-scale-validation"
+  log_interval: 100
+  
+  # Weights & Biases integration
+  use_wandb: true
+  wandb_project: "hardware-data-parameter-codesign"
+  
+  # Checkpoint management
+  save_top_k: 3                   # Keep top 3 checkpoints
+  monitor_metric: "eval/perplexity"
+  mode: "min"
+
+# Reproducibility
+seed: 42
+deterministic: true
+benchmark: false                  # Set to true for consistent hardware 

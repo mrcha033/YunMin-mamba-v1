@@ -13,7 +13,7 @@ from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 from accelerate import Accelerator
 
 from models.baseline_ssm import BaselineSSM
-from data.wiktext103 import get_wiktext103_dataloader
+from data.wikitext103 import get_wiktext103_dataloader
 from utils.logger import setup_logger, setup_wandb, log_model_info, log_training_info
 from utils.profiling import count_parameters, count_flops
 

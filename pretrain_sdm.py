@@ -16,7 +16,7 @@ from accelerate import Accelerator
 import wandb
 
 from models.sdm_ssm import SDM_SSM, SDM_MambaBlock
-from data.wiktext103 import get_wiktext103_dataloader
+from data.wikitext103 import get_wiktext103_dataloader
 from utils.logger import setup_logger, setup_wandb, log_model_info, log_training_info
 from utils.profiling import count_parameters
 

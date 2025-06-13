@@ -29,7 +29,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from models.baseline_ssm import BaselineSSM
 from models.sdm_ssm import SDM_SSM
 from models.sgh_peft import SGHPEFTModel, create_sgh_peft_model
-from data.wiktext103 import get_wiktext103_dataloader
+from data.wikitext103 import get_wiktext103_dataloader
 from data.glue import get_glue_dataloader
 from utils.profiling import count_parameters, measure_latency
 from transformers import AutoTokenizer

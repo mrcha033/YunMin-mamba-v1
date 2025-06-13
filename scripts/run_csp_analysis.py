@@ -8,7 +8,7 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 from models.baseline_ssm import BaselineSSM
-from data.wiktext103 import get_wiktext103_dataloader
+from data.wikitext103 import get_wiktext103_dataloader
 from utils.logger import setup_logger
 
 # A list to store the captured hidden states from the forward hook

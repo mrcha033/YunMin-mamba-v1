@@ -65,31 +65,43 @@ def main():
     import os
     os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
     
-    # Initialize accelerator for distributed training
-    # Handle nested config structure
+    # Setup logging first
+    logger = setup_logger(
+        name="pretrain",
+        log_file=os.path.join(args.output_dir, "train.log")
+    )
+    
+    # Handle nested config structure first
     training_config = config.get('training', {})
     if 'pretrain' in training_config:
         # New nested structure
         pretrain_config = training_config['pretrain']
-        gradient_accumulation_steps = pretrain_config.get('gradient_accumulation_steps', 1)
+        conceptual_batch_size = int(pretrain_config.get('batch_size', 32))
+        micro_batch_size = int(pretrain_config.get('micro_batch_size', 8))
     else:
         # Legacy flat structure
-        gradient_accumulation_steps = training_config.get('gradient_accumulation_steps', 1)
+        conceptual_batch_size = int(training_config.get('batch_size', 32))
+        micro_batch_size = int(training_config.get('micro_batch_size', 8))
+    
+    # Memory optimization: start with smaller micro batch size if needed
+    if micro_batch_size > 4:
+        micro_batch_size = 4
+        logger.info(f"Reducing micro batch size to {micro_batch_size} for memory optimization")
+    
+    # Calculate gradient accumulation steps
+    actual_gradient_accumulation_steps = max(1, conceptual_batch_size // micro_batch_size)
+    logger.info(f"Conceptual batch size: {conceptual_batch_size}, Micro batch size: {micro_batch_size}")
+    logger.info(f"Gradient accumulation steps: {actual_gradient_accumulation_steps}")
     
     # Get system configuration for memory optimization
     system_config = config.get('system', {})
     mixed_precision = system_config.get('mixed_precision', 'bf16')
     
+    # Initialize accelerator for distributed training
     accelerator = Accelerator(
         gradient_accumulation_steps=actual_gradient_accumulation_steps,
         mixed_precision=mixed_precision,
         log_with="wandb" if config['logging'].get('wandb_project') else None
-    )
-    
-    # Setup logging
-    logger = setup_logger(
-        name="pretrain",
-        log_file=os.path.join(args.output_dir, "train.log")
     )
     
     # Setup W&B logging
@@ -100,9 +112,6 @@ def main():
             project=config['logging']['wandb_project'],
             run_name=run_name
         )
-    
-    # Create output directory
-    os.makedirs(args.output_dir, exist_ok=True)
     
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
@@ -125,40 +134,19 @@ def main():
         else:
             logger.info("Gradient checkpointing not supported by model, using torch.utils.checkpoint manually")
     
-    # Get training parameters with nested config support
+    # Get remaining training parameters
     if 'pretrain' in training_config:
-        conceptual_batch_size = int(pretrain_config.get('batch_size', 32))
-        micro_batch_size = int(pretrain_config.get('micro_batch_size', 8))
         learning_rate = float(pretrain_config.get('learning_rate', 1e-4))
         weight_decay = float(pretrain_config.get('weight_decay', 0.1))
         warmup_steps = int(pretrain_config.get('warmup_steps', 1000))
         max_grad_norm = float(pretrain_config.get('max_grad_norm', 1.0))
         max_steps = int(pretrain_config.get('max_epochs', 20)) * 1000  # Convert epochs to steps estimate
     else:
-        conceptual_batch_size = int(training_config.get('batch_size', 32))
-        micro_batch_size = int(training_config.get('micro_batch_size', 8))
         learning_rate = float(training_config.get('learning_rate', 1e-4))
         weight_decay = float(training_config.get('weight_decay', 0.1))
         warmup_steps = int(training_config.get('warmup_steps', 1000))
         max_grad_norm = float(training_config.get('max_grad_norm', 1.0))
         max_steps = int(training_config.get('max_steps', 20000))
-    
-    # Memory optimization: start with smaller micro batch size if needed
-    try:
-        # Try to reduce micro batch size for memory constraints
-        if micro_batch_size > 4:
-            micro_batch_size = 4
-            logger.info(f"Reducing micro batch size to {micro_batch_size} for memory optimization")
-        
-        # Calculate gradient accumulation steps
-        actual_gradient_accumulation_steps = max(1, conceptual_batch_size // micro_batch_size)
-        logger.info(f"Conceptual batch size: {conceptual_batch_size}, Micro batch size: {micro_batch_size}")
-        logger.info(f"Gradient accumulation steps: {actual_gradient_accumulation_steps}")
-        
-    except Exception as e:
-        logger.warning(f"Error calculating batch sizes: {e}")
-        micro_batch_size = 2
-        actual_gradient_accumulation_steps = conceptual_batch_size // micro_batch_size
     
     # Get data configuration with memory optimization
     data_config = config.get('data', {})

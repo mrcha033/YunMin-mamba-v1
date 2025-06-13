@@ -1,251 +1,498 @@
 """
-SGH-PEFT fine-tuning script - Pillar 3
-This script implements Sparsity-Guided Hybrid PEFT for downstream task adaptation.
+SGH-PEFT Fine-tuning Script - Pillar 3: Sparsity-Guided Hybrid PEFT
+
+This script implements the complete fine-tuning pipeline using SGH-PEFT:
+1. Load pre-trained SDM model (M_SDM) 
+2. Compute layer-wise importance scores from z_logits
+3. Apply hybrid LoRA/IA³ adapters based on importance
+4. Fine-tune on downstream tasks (GLUE)
 """
 
 import argparse
+import os
 import yaml
 import torch
 import torch.nn as nn
+from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, get_linear_schedule_with_warmup
-from peft import LoraConfig, IA3Config, get_peft_model
 from accelerate import Accelerator
+import wandb
+from tqdm import tqdm
+import numpy as np
+from sklearn.metrics import accuracy_score, f1_score
 
-from models.baseline_ssm import BaselineSSM
-from data.glue import get_glue_dataloader, get_glue_metrics
-from utils.logger import setup_logger, setup_wandb
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from models.sdm_ssm import SDM_SSM
+from models.sgh_peft import (
+    SGHPEFTModel, SGHPEFTConfig, create_sgh_peft_model, 
+    compute_layer_importance_scores
+)
+from data.glue import get_glue_dataloader
+from utils.logger import setup_logger, setup_wandb, log_model_info
+from utils.profiling import count_parameters
 
 
-def compute_layer_importance(model, dataloader, method="gradient_norm"):
+def load_sdm_model(checkpoint_path: str, config: dict) -> SDM_SSM:
     """
-    Compute importance scores for each layer to guide PEFT strategy.
-    
-    This is a placeholder implementation. The actual importance scoring would use
-    the structured masking logits from SDM pre-training.
+    Load pre-trained SDM model from checkpoint.
     
     Args:
-        model: Pre-trained model
-        dataloader: Validation dataloader for importance estimation
-        method: Method for computing importance scores
-    
-    Returns:
-        Dictionary mapping layer indices to importance scores
-    """
-    logger = setup_logger("importance_scoring")
-    logger.info(f"Computing layer importance using {method}...")
-    
-    model.eval()
-    importance_scores = {}
-    
-    # Placeholder: Random importance scores for demonstration
-    # Actual implementation would use SDM masking logits or gradient-based methods
-    num_layers = len(model.layers)
-    for i in range(num_layers):
-        importance_scores[i] = torch.rand(1).item()
-    
-    logger.info(f"Computed importance scores for {num_layers} layers")
-    return importance_scores
-
-
-def apply_sgh_peft(model, importance_scores, peft_config):
-    """
-    Apply Sparsity-Guided Hybrid PEFT based on layer importance scores.
-    
-    Args:
-        model: Base model
-        importance_scores: Dictionary of layer importance scores
-        peft_config: PEFT configuration parameters
-    
-    Returns:
-        Model with applied PEFT adapters
-    """
-    logger = setup_logger("sgh_peft")
-    threshold = peft_config['importance_scoring']['threshold']
-    
-    logger.info(f"Applying SGH-PEFT with threshold {threshold}")
-    
-    # Classify layers based on importance
-    high_importance_layers = []
-    low_importance_layers = []
-    
-    for layer_idx, score in importance_scores.items():
-        if score > threshold:
-            high_importance_layers.append(layer_idx)
-        else:
-            low_importance_layers.append(layer_idx)
-    
-    logger.info(f"High importance layers (LoRA): {high_importance_layers}")
-    logger.info(f"Low importance layers (IA³): {low_importance_layers}")
-    
-    # Apply LoRA to high-importance layers
-    if high_importance_layers:
-        lora_config = LoraConfig(
-            r=peft_config['lora']['r'],
-            lora_alpha=peft_config['lora']['lora_alpha'],
-            target_modules=peft_config['lora']['target_modules'],
-            lora_dropout=peft_config['lora']['lora_dropout'],
-            bias="none",
-            task_type="FEATURE_EXTRACTION"
-        )
+        checkpoint_path: Path to SDM checkpoint
+        config: Model configuration
         
-        # Note: In practice, we would selectively apply LoRA only to high-importance layers
-        # This is a simplified implementation
-        model = get_peft_model(model, lora_config)
-        logger.info("Applied LoRA to high-importance layers")
+    Returns:
+        Loaded SDM model with learned sparsity patterns
+    """
+    print(f"Loading SDM model from {checkpoint_path}")
     
-    # Apply IA³ to low-importance layers (placeholder - PEFT library integration needed)
-    if low_importance_layers:
-        logger.info("IA³ application would be implemented here")
+    # Create model
+    model = SDM_SSM(
+        d_model=config['model']['d_model'],
+        n_layer=config['model']['n_layer'],
+        vocab_size=config['model']['vocab_size'],
+        d_state=config['model']['d_state'],
+        d_conv=config['model']['d_conv'],
+        gumbel_temp=1.0  # Not used during inference
+    )
+    
+    # Load checkpoint
+    if os.path.isfile(checkpoint_path):
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        
+        # Handle different checkpoint formats
+        if 'model_state_dict' in checkpoint:
+            state_dict = checkpoint['model_state_dict']
+        else:
+            state_dict = checkpoint
+        
+        # Load state dict
+        model.load_state_dict(state_dict, strict=False)
+        print(f"✓ Loaded SDM model with {count_parameters(model)['total_parameters']:,} parameters")
+        
+        # Log sparsity information if available
+        if hasattr(model, 'get_sparsity_summary'):
+            sparsity_summary = model.get_sparsity_summary()
+            print(f"✓ Model sparsity: {sparsity_summary['overall_sparsity']:.2%}")
+            print(f"✓ Compression ratio: {sparsity_summary['compression_ratio']:.2f}x")
+        
+    else:
+        raise FileNotFoundError(f"No checkpoint found at {checkpoint_path}")
     
     return model
 
 
-def finetune_on_task(model, task_name, config, tokenizer):
+def create_task_specific_head(num_labels: int, d_model: int) -> nn.Module:
     """
-    Fine-tune model on a specific GLUE task.
+    Create task-specific classification head for GLUE tasks.
     
     Args:
-        model: PEFT-enabled model
-        task_name: GLUE task name
-        config: Fine-tuning configuration
-        tokenizer: Tokenizer for text processing
-    
-    Returns:
-        Fine-tuned model and training metrics
-    """
-    logger = setup_logger("finetuning")
-    logger.info(f"Fine-tuning on {task_name}...")
-    
-    # Create data loaders
-    train_dataloader = get_glue_dataloader(
-        tokenizer=tokenizer,
-        task_name=task_name,
-        batch_size=config['training']['batch_size'],
-        max_length=config['model']['max_length'],
-        split="train"
-    )
-    
-    val_dataloader = get_glue_dataloader(
-        tokenizer=tokenizer,
-        task_name=task_name,
-        batch_size=config['training']['batch_size'],
-        max_length=config['model']['max_length'],
-        split="validation"
-    )
-    
-    # Add task-specific head
-    num_labels = {"cola": 2, "sst2": 2, "mrpc": 2, "qqp": 2, 
-                  "mnli": 3, "qnli": 2, "rte": 2, "wnli": 2}[task_name]
-    
-    # For this baseline, we'll add a simple classification head
-    classification_head = nn.Linear(model.config.d_model if hasattr(model, 'config') else 768, num_labels)
-    
-    # Setup training
-    optimizer = torch.optim.AdamW(
-        list(model.parameters()) + list(classification_head.parameters()),
-        lr=config['training']['learning_rate'],
-        weight_decay=config['training']['weight_decay']
-    )
-    
-    num_epochs = config['training']['num_epochs']
-    num_training_steps = len(train_dataloader) * num_epochs
-    
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=int(config['training']['warmup_ratio'] * num_training_steps),
-        num_training_steps=num_training_steps
-    )
-    
-    # Training loop (simplified)
-    model.train()
-    classification_head.train()
-    
-    for epoch in range(num_epochs):
-        total_loss = 0
-        num_batches = 0
+        num_labels: Number of output labels
+        d_model: Model dimension
         
-        for batch in train_dataloader:
+    Returns:
+        Classification head module
+    """
+    return nn.Sequential(
+        nn.Dropout(0.1),
+        nn.Linear(d_model, d_model // 2),
+        nn.ReLU(),
+        nn.Dropout(0.1),
+        nn.Linear(d_model // 2, num_labels)
+    )
+
+
+class SGHPEFTForSequenceClassification(nn.Module):
+    """
+    SGH-PEFT model adapted for sequence classification tasks.
+    
+    This wraps the SGH-PEFT model with a task-specific head for GLUE fine-tuning.
+    """
+    
+    def __init__(self, sgh_peft_model: SGHPEFTModel, num_labels: int):
+        super().__init__()
+        
+        self.backbone = sgh_peft_model
+        self.num_labels = num_labels
+        
+        # Task-specific classification head
+        self.classifier = create_task_specific_head(num_labels, sgh_peft_model.embedding.embedding_dim)
+        
+        # Pooling strategy for sequence classification
+        self.pooling_strategy = "mean"  # Options: "mean", "max", "cls"
+    
+    def forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
+        """
+        Forward pass for sequence classification.
+        
+        Args:
+            input_ids: Input token IDs
+            attention_mask: Attention mask (optional)
+            
+        Returns:
+            Classification logits
+        """
+        # Get sequence representations from SGH-PEFT backbone
+        sequence_output = self.backbone(input_ids)  # (batch, seq_len, d_model)
+        
+        # Pool sequence representations
+        if self.pooling_strategy == "mean":
+            if attention_mask is not None:
+                # Masked mean pooling
+                masked_output = sequence_output * attention_mask.unsqueeze(-1)
+                pooled_output = masked_output.sum(dim=1) / attention_mask.sum(dim=1, keepdim=True)
+            else:
+                pooled_output = sequence_output.mean(dim=1)
+        elif self.pooling_strategy == "max":
+            pooled_output = sequence_output.max(dim=1)[0]
+        else:  # cls
+            pooled_output = sequence_output[:, 0]  # Use first token
+        
+        # Classification
+        logits = self.classifier(pooled_output)
+        
+        return logits
+
+
+def evaluate_model(model: nn.Module, dataloader: DataLoader, device: torch.device) -> dict:
+    """
+    Evaluate model on validation/test set.
+    
+    Args:
+        model: Model to evaluate
+        dataloader: Evaluation dataloader
+        device: Device to run evaluation on
+        
+    Returns:
+        Dictionary with evaluation metrics
+    """
+    model.eval()
+    
+    all_predictions = []
+    all_labels = []
+    total_loss = 0.0
+    num_samples = 0
+    
+    criterion = nn.CrossEntropyLoss()
+    
+    with torch.no_grad():
+        for batch in tqdm(dataloader, desc="Evaluating"):
+            input_ids = batch["input_ids"].to(device)
+            attention_mask = batch.get("attention_mask", None)
+            if attention_mask is not None:
+                attention_mask = attention_mask.to(device)
+            labels = batch["labels"].to(device)
+            
             # Forward pass
-            outputs = model(batch["input_ids"])
+            logits = model(input_ids, attention_mask)
+            loss = criterion(logits, labels)
             
-            # Get sequence representation (mean pooling)
-            sequence_output = outputs.mean(dim=1)
-            logits = classification_head(sequence_output)
-            
-            # Compute loss
-            loss = nn.functional.cross_entropy(logits, batch["labels"])
-            
-            # Backward pass
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad()
+            # Collect predictions and labels
+            predictions = torch.argmax(logits, dim=-1)
+            all_predictions.extend(predictions.cpu().numpy())
+            all_labels.extend(labels.cpu().numpy())
             
             total_loss += loss.item()
-            num_batches += 1
-            
-            if num_batches % 100 == 0:
-                logger.info(f"Epoch {epoch}, Batch {num_batches}, Loss: {loss.item():.4f}")
-        
-        avg_loss = total_loss / num_batches
-        logger.info(f"Epoch {epoch} completed, Average Loss: {avg_loss:.4f}")
+            num_samples += input_ids.size(0)
     
-    return model, {"final_loss": avg_loss}
+    # Calculate metrics
+    accuracy = accuracy_score(all_labels, all_predictions)
+    f1 = f1_score(all_labels, all_predictions, average='weighted')
+    avg_loss = total_loss / len(dataloader)
+    
+    return {
+        'accuracy': accuracy,
+        'f1': f1,
+        'loss': avg_loss,
+        'num_samples': num_samples
+    }
+
+
+def save_sgh_peft_checkpoint(
+    model: SGHPEFTForSequenceClassification,
+    optimizer: torch.optim.Optimizer,
+    scheduler: torch.optim.lr_scheduler._LRScheduler,
+    step: int,
+    metrics: dict,
+    output_dir: str,
+    config: dict
+):
+    """
+    Save SGH-PEFT checkpoint with adaptation information.
+    
+    Args:
+        model: SGH-PEFT model
+        optimizer: Optimizer state
+        scheduler: Scheduler state
+        step: Current step
+        metrics: Training metrics
+        output_dir: Output directory
+        config: Configuration
+    """
+    checkpoint_dir = os.path.join(output_dir, f"sgh-peft-checkpoint-{step}")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    
+    # Get adaptation summary
+    adaptation_summary = model.backbone.get_adaptation_summary()
+    
+    checkpoint = {
+        'model_state_dict': model.state_dict(),
+        'optimizer_state_dict': optimizer.state_dict(),
+        'scheduler_state_dict': scheduler.state_dict(),
+        'step': step,
+        'metrics': metrics,
+        'adaptation_summary': adaptation_summary,
+        'config': config,
+        'sgh_peft_applied': True
+    }
+    
+    torch.save(checkpoint, os.path.join(checkpoint_dir, "pytorch_model.bin"))
+    
+    # Save config
+    with open(os.path.join(checkpoint_dir, "config.yaml"), 'w') as f:
+        yaml.dump(config, f)
+    
+    print(f"SGH-PEFT checkpoint saved at step {step}")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="SGH-PEFT Fine-tuning")
+    parser.add_argument("--config", type=str, default="configs/finetune_sgh_peft.yaml",
+                        help="Path to fine-tuning configuration file")
+    parser.add_argument("--sdm_model", type=str, required=True,
+                        help="Path to pre-trained SDM model checkpoint")
+    parser.add_argument("--task", type=str, default="cola",
+                        help="GLUE task name (cola, sst2, mrpc, etc.)")
+    parser.add_argument("--output_dir", type=str, default="./checkpoints/sgh_peft",
+                        help="Output directory for checkpoints")
+    parser.add_argument("--max_length", type=int, default=512,
+                        help="Maximum sequence length")
+    return parser.parse_args()
+
+
+def load_config(config_path: str) -> dict:
+    """Load configuration from YAML file."""
+    with open(config_path, 'r') as f:
+        config = yaml.safe_load(f)
+    return config
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Run SGH-PEFT fine-tuning")
-    parser.add_argument("--config", type=str, default="configs/finetune_glue.yaml",
-                        help="Path to fine-tuning configuration")
-    parser.add_argument("--model_path", type=str, required=True,
-                        help="Path to pre-trained model checkpoint")
-    parser.add_argument("--output_dir", type=str, default="./checkpoints/finetuned",
-                        help="Output directory for fine-tuned models")
-    parser.add_argument("--task", type=str, default="cola",
-                        help="GLUE task to fine-tune on")
+    args = parse_args()
+    config = load_config(args.config)
     
-    args = parser.parse_args()
+    # Initialize accelerator
+    accelerator = Accelerator(
+        gradient_accumulation_steps=config['training']['gradient_accumulation_steps'],
+        log_with="wandb" if config['logging'].get('wandb_project') else None
+    )
     
-    # Load configuration
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
+    # Setup logging
+    logger = setup_logger(
+        name="sgh_peft_finetune",
+        log_file=os.path.join(args.output_dir, "sgh_peft_train.log")
+    )
     
-    logger = setup_logger("sgh_peft_main")
+    # Setup W&B logging
+    if accelerator.is_main_process and config['logging'].get('wandb_project'):
+        setup_wandb(
+            config=config,
+            project=config['logging']['wandb_project'],
+            run_name=f"sgh_peft_{args.task}"
+        )
+    
+    # Create output directory
+    os.makedirs(args.output_dir, exist_ok=True)
     
     # Initialize tokenizer
     tokenizer = AutoTokenizer.from_pretrained("gpt2")
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     
-    # Load pre-trained model (placeholder - actual implementation would load from checkpoint)
-    logger.info("Loading pre-trained model...")
-    model = BaselineSSM(d_model=768, n_layer=12, vocab_size=50257, d_state=16, d_conv=4)
+    # Step 1: Load pre-trained SDM model
+    logger.info("Step 1: Loading pre-trained SDM model...")
+    sdm_model = load_sdm_model(args.sdm_model, config)
     
-    # Create importance estimation dataloader
-    importance_dataloader = get_glue_dataloader(
-        tokenizer=tokenizer,
+    # Step 2: Create SGH-PEFT configuration
+    logger.info("Step 2: Creating SGH-PEFT configuration...")
+    sgh_peft_config = SGHPEFTConfig(
+        lora_high_rank=config['sgh_peft']['lora_high_rank'],
+        lora_low_rank=config['sgh_peft']['lora_low_rank'],
+        lora_alpha_factor=config['sgh_peft']['lora_alpha_factor'],
+        lora_dropout=config['sgh_peft']['lora_dropout'],
+        high_importance_mean_threshold=config['sgh_peft']['high_importance_mean_threshold'],
+        high_importance_active_threshold=config['sgh_peft']['high_importance_active_threshold'],
+        medium_importance_mean_threshold=config['sgh_peft']['medium_importance_mean_threshold'],
+        medium_importance_active_threshold=config['sgh_peft']['medium_importance_active_threshold'],
+        low_importance_mean_threshold=config['sgh_peft']['low_importance_mean_threshold'],
+        apply_sparsity_mask=config['sgh_peft']['apply_sparsity_mask'],
+        freeze_base_model=config['sgh_peft']['freeze_base_model']
+    )
+    
+    # Step 3: Create SGH-PEFT model
+    logger.info("Step 3: Creating SGH-PEFT model...")
+    sgh_peft_model = create_sgh_peft_model(sdm_model, sgh_peft_config)
+    
+    # Step 4: Create task-specific model
+    logger.info("Step 4: Creating task-specific model...")
+    task_config = config['tasks'][args.task]
+    num_labels = task_config['num_labels']
+    
+    model = SGHPEFTForSequenceClassification(sgh_peft_model, num_labels)
+    
+    # Log model information
+    if accelerator.is_main_process:
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        
+        logger.info(f"Total parameters: {total_params:,}")
+        logger.info(f"Trainable parameters: {trainable_params:,}")
+        logger.info(f"Trainable ratio: {trainable_params/total_params:.2%}")
+        
+        # Log adaptation summary
+        adaptation_summary = sgh_peft_model.get_adaptation_summary()
+        logger.info("SGH-PEFT Adaptation Summary:")
+        for adapter_type, count in adaptation_summary['adapter_distribution'].items():
+            logger.info(f"  {adapter_type}: {count} layers")
+    
+    # Step 5: Create data loaders
+    logger.info("Step 5: Creating data loaders...")
+    train_dataloader = get_glue_dataloader(
         task_name=args.task,
-        batch_size=16,
-        max_length=config['model']['max_length'],
+        tokenizer=tokenizer,
+        batch_size=config['training']['batch_size'],
+        max_length=args.max_length,
+        split="train"
+    )
+    
+    val_dataloader = get_glue_dataloader(
+        task_name=args.task,
+        tokenizer=tokenizer,
+        batch_size=config['training']['batch_size'],
+        max_length=args.max_length,
         split="validation"
     )
     
-    # Compute layer importance scores
-    importance_scores = compute_layer_importance(model, importance_dataloader)
+    # Step 6: Initialize optimizer and scheduler
+    logger.info("Step 6: Setting up training...")
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=config['training']['learning_rate'],
+        weight_decay=config['training']['weight_decay']
+    )
     
-    # Apply SGH-PEFT
-    model = apply_sgh_peft(model, importance_scores, config['peft'])
+    num_training_steps = config['training']['max_steps']
+    scheduler = get_linear_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=config['training']['warmup_steps'],
+        num_training_steps=num_training_steps
+    )
     
-    # Fine-tune on target task
-    finetuned_model, metrics = finetune_on_task(model, args.task, config, tokenizer)
+    # Prepare for distributed training
+    model, optimizer, train_dataloader, val_dataloader, scheduler = accelerator.prepare(
+        model, optimizer, train_dataloader, val_dataloader, scheduler
+    )
     
-    # Save fine-tuned model
-    output_path = f"{args.output_dir}/{args.task}_model"
-    finetuned_model.save_pretrained(output_path)
+    # Step 7: Fine-tuning loop
+    logger.info("Step 7: Starting SGH-PEFT fine-tuning...")
     
-    logger.info(f"Fine-tuned model saved to {output_path}")
-    logger.info(f"Final metrics: {metrics}")
-    logger.info("SGH-PEFT fine-tuning complete!")
+    model.train()
+    global_step = 0
+    running_loss = 0.0
+    best_accuracy = 0.0
+    
+    criterion = nn.CrossEntropyLoss()
+    
+    for epoch in range(1000):  # Large number, will break when max_steps reached
+        for batch_idx, batch in enumerate(train_dataloader):
+            with accelerator.accumulate(model):
+                # Forward pass
+                input_ids = batch["input_ids"]
+                attention_mask = batch.get("attention_mask", None)
+                labels = batch["labels"]
+                
+                logits = model(input_ids, attention_mask)
+                loss = criterion(logits, labels)
+                
+                # Backward pass
+                accelerator.backward(loss)
+                
+                # Gradient clipping
+                if accelerator.sync_gradients:
+                    accelerator.clip_grad_norm_(model.parameters(), config['training']['max_grad_norm'])
+                
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+            
+            if accelerator.sync_gradients:
+                global_step += 1
+                running_loss += loss.item()
+                
+                # Logging
+                if global_step % config['logging']['log_interval'] == 0:
+                    avg_loss = running_loss / config['logging']['log_interval']
+                    
+                    logger.info(f"Step {global_step}")
+                    logger.info(f"  Loss: {avg_loss:.4f}")
+                    logger.info(f"  LR: {scheduler.get_last_lr()[0]:.2e}")
+                    
+                    if accelerator.is_main_process and config['logging'].get('wandb_project'):
+                        wandb.log({
+                            "train/loss": avg_loss,
+                            "train/learning_rate": scheduler.get_last_lr()[0],
+                            "train/step": global_step
+                        })
+                    
+                    running_loss = 0.0
+                
+                # Evaluation
+                if global_step % config['logging']['eval_interval'] == 0:
+                    logger.info("Running evaluation...")
+                    eval_metrics = evaluate_model(model, val_dataloader, accelerator.device)
+                    
+                    logger.info(f"Evaluation Results:")
+                    logger.info(f"  Accuracy: {eval_metrics['accuracy']:.4f}")
+                    logger.info(f"  F1: {eval_metrics['f1']:.4f}")
+                    logger.info(f"  Loss: {eval_metrics['loss']:.4f}")
+                    
+                    if accelerator.is_main_process and config['logging'].get('wandb_project'):
+                        wandb.log({
+                            "eval/accuracy": eval_metrics['accuracy'],
+                            "eval/f1": eval_metrics['f1'],
+                            "eval/loss": eval_metrics['loss'],
+                            "train/step": global_step
+                        })
+                    
+                    # Save best model
+                    if eval_metrics['accuracy'] > best_accuracy:
+                        best_accuracy = eval_metrics['accuracy']
+                        if accelerator.is_main_process:
+                            save_sgh_peft_checkpoint(
+                                accelerator.unwrap_model(model),
+                                optimizer,
+                                scheduler,
+                                global_step,
+                                eval_metrics,
+                                args.output_dir,
+                                config
+                            )
+                    
+                    model.train()
+                
+                # Check if training is complete
+                if global_step >= config['training']['max_steps']:
+                    logger.info("SGH-PEFT fine-tuning completed!")
+                    
+                    # Final evaluation
+                    final_metrics = evaluate_model(model, val_dataloader, accelerator.device)
+                    logger.info("Final Evaluation Results:")
+                    logger.info(f"  Best Accuracy: {best_accuracy:.4f}")
+                    logger.info(f"  Final Accuracy: {final_metrics['accuracy']:.4f}")
+                    logger.info(f"  Final F1: {final_metrics['f1']:.4f}")
+                    
+                    return
 
 
 if __name__ == "__main__":

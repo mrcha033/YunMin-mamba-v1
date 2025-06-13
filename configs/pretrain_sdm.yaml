@@ -1,0 +1,67 @@
+# SDM Pre-training Configuration - Pillar 2: Structured Differentiable Masking
+# This configuration enables learning of channel-wise sparsity during pre-training
+
+model:
+  d_model: 768
+  n_layer: 12
+  vocab_size: 50257
+  d_state: 16
+  d_conv: 4
+
+training:
+  batch_size: 24  # Slightly smaller due to additional memory for masks
+  learning_rate: 8e-5  # Lower LR for stable sparsity learning
+  weight_decay: 0.1
+  warmup_steps: 2000  # More warmup for sparsity stabilization
+  max_steps: 50000  # Shorter training focused on sparsity learning
+  gradient_accumulation_steps: 4
+  max_grad_norm: 1.0
+
+data:
+  dataset_name: "wikitext-103-raw-v1"
+  max_length: 1024
+  num_workers: 4
+
+# SDM-specific parameters for Pillar 2
+sdm:
+  # Sparsity regularization weight (λ in the paper)
+  # Higher values encourage more sparsity but may hurt task performance
+  lambda_sparsity: 0.01
+  
+  # Gumbel-Sigmoid temperature schedule
+  initial_temperature: 5.0    # Start with exploration (soft masks)
+  final_temperature: 0.1      # End with exploitation (sharp masks)
+  
+  # Target sparsity levels for monitoring
+  target_sparsity: 0.5        # Aim for 50% channel reduction
+  
+  # Sparsity learning schedule
+  sparsity_warmup_steps: 5000  # Steps before applying full sparsity loss
+  
+  # Mask threshold for inference
+  mask_threshold: 0.0         # Keep channels with z_logits > 0
+
+logging:
+  log_interval: 50            # More frequent logging for sparsity monitoring
+  eval_interval: 1000
+  save_interval: 2500
+  wandb_project: "hardware-data-parameter-codesign"
+  run_name: "sdm_pretrain"
+
+# Advanced SDM settings
+advanced_sdm:
+  # Annealing schedule for sparsity loss
+  use_sparsity_annealing: true
+  annealing_start_step: 1000
+  annealing_end_step: 10000
+  
+  # Channel importance initialization
+  importance_init: "zero"      # Options: "zero", "normal", "uniform"
+  
+  # Structured masking options
+  group_sparsity: false        # Group channels for structured pruning
+  group_size: 4               # Size of channel groups (if enabled)
+  
+  # Regularization variants
+  l1_regularization: 0.001    # Additional L1 on z_logits
+  entropy_regularization: 0.0 # Encourage diverse mask patterns 

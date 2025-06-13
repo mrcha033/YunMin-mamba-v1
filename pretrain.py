@@ -109,22 +109,6 @@ def main():
         d_conv=config['model']['d_conv']
     )
     
-    # Log model information
-    if accelerator.is_main_process:
-        log_model_info(logger, model, config['model'])
-        log_training_info(logger, config['training'])
-        
-        # Profile model
-        param_info = count_parameters(model)
-        logger.info(f"Parameter analysis: {param_info}")
-        
-        # Count FLOPs (on CPU to avoid memory issues)
-        try:
-            flop_info = count_flops(model, (1, max_length), device="cpu")
-            logger.info(f"FLOPs analysis: {flop_info['total_flops']:,}")
-        except Exception as e:
-            logger.warning(f"FLOPs counting failed: {e}")
-    
     # Get training parameters with nested config support
     if 'pretrain' in training_config:
         batch_size = pretrain_config.get('batch_size', 32)
@@ -141,10 +125,26 @@ def main():
         max_grad_norm = training_config.get('max_grad_norm', 1.0)
         max_steps = training_config.get('max_steps', 20000)
     
-    # Create data loaders
+    # Get data configuration
     data_config = config.get('data', {})
     max_length = data_config.get('max_length', 1024)
     num_workers = config.get('system', {}).get('dataloader_num_workers', data_config.get('num_workers', 4))
+    
+    # Log model information
+    if accelerator.is_main_process:
+        log_model_info(logger, model, config['model'])
+        log_training_info(logger, config['training'])
+        
+        # Profile model
+        param_info = count_parameters(model)
+        logger.info(f"Parameter analysis: {param_info}")
+        
+        # Count FLOPs (on CPU to avoid memory issues)
+        try:
+            flop_info = count_flops(model, (1, max_length), device="cpu")
+            logger.info(f"FLOPs analysis: {flop_info['total_flops']:,}")
+        except Exception as e:
+            logger.warning(f"FLOPs counting failed: {e}")
     
     train_dataloader = get_wiktext103_dataloader(
         tokenizer=tokenizer,

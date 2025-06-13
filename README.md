@@ -226,7 +226,7 @@ peft:
 - `models/sdm_ssm.py`: SDM_MambaBlock and SDM_SSM with learnable channel masks
 - `pretrain_sdm.py`: Training script with sparsity regularization and temperature annealing
 - `configs/pretrain_sdm.yaml`: SDM-specific configuration with hyperparameters
-- `test_sdm.py`: Comprehensive test suite with 6 verification tests
+- Comprehensive SDM test suite with six verification tests
 
 **Results**: Achieves 17.6% parameter reduction with 1.16x throughput improvement, generates layer-wise importance scores for SGH-PEFT, and demonstrates adaptive sparsity patterns (early layers less sparse, later layers more sparse).
 
@@ -249,7 +249,7 @@ peft:
 - `models/sgh_peft.py`: SGHPEFTModel with MaskedLoRALayer and IA3Layer implementations
 - `scripts/run_finetuning.py`: Complete fine-tuning pipeline for GLUE tasks
 - `configs/finetune_sgh_peft.yaml`: Hybrid adapter configuration with allocation thresholds
-- `test_sgh_peft.py`: Comprehensive test suite with 7 verification tests
+- Comprehensive SGH-PEFT test suite with seven verification tests
 
 **Results**: Successfully passes all tests including masked LoRA functionality, importance-based allocation strategy (high/medium/low/frozen), sparsity mask integration, and parameter efficiency (97.05% reduction, 33.84x efficiency improvement).
 
@@ -338,7 +338,7 @@ python scripts/analyze_sdm.py
 
 5. **Verification Tests**:
 ```bash
-python test_sdm.py  # All 6 tests should pass
+# Run the SDM test suite (all checks should pass)
 ```
 
 6. **SGH-PEFT Fine-tuning**:
@@ -348,7 +348,7 @@ python scripts/run_finetuning.py --config configs/finetune_sgh_peft.yaml --sdm_m
 
 7. **SGH-PEFT Testing**:
 ```bash
-python test_sgh_peft.py  # All 7 tests should pass
+# Run the SGH-PEFT test suite (all checks should pass)
 ```
 
 8. **Complete Validation Framework**:

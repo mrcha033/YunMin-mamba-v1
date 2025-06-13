@@ -31,53 +31,62 @@ training:
   # Phase A: Pre-training hyperparameters
   pretrain:
     optimizer: "AdamW"
-    learning_rate: 2e-4
+    learning_rate: 2e-4           # Peak learning rate for pre-training
     weight_decay: 0.1
     beta1: 0.9
-    beta2: 0.95
-    eps: 1e-8
+    beta2: 0.98                   # Updated from 0.95 to 0.98
+    eps: 1e-6                     # Updated from 1e-8 to 1e-6
     
     # Training schedule
-    batch_size: 128               # Global batch size
-    micro_batch_size: 8           # Per-device batch size
-    gradient_accumulation_steps: 16  # 128 / 8 = 16
+    batch_size: 128               # Conceptual batch size
+    micro_batch_size: 8           # Per-device batch size (adjust based on memory)
+    gradient_accumulation_steps: 16  # 128 / 8 = 16 (will adjust dynamically if needed)
     max_epochs: 20
-    warmup_steps_ratio: 0.1       # 10% of total steps
+    warmup_steps_ratio: 0.1       # Linear warmup for first 10% of training steps
     
     # Regularization
     max_grad_norm: 1.0
     dropout: 0.0
     
-    # Learning rate schedule
+    # Learning rate schedule - Cosine annealing with linear warmup
     lr_scheduler: "cosine"
     min_lr_ratio: 0.1             # min_lr = 0.1 * learning_rate
     
   # Phase B: Fine-tuning hyperparameters  
   finetune:
     optimizer: "AdamW"
-    learning_rate: 1e-4
+    learning_rate: 1e-4           # Peak learning rate for fine-tuning
     weight_decay: 0.01
+    beta1: 0.9
+    beta2: 0.98                   # Consistent with pre-training
+    eps: 1e-6                     # Consistent with pre-training
     
     # Task-specific settings
-    batch_size: 32
-    micro_batch_size: 8
-    gradient_accumulation_steps: 4
+    batch_size: 32                # Conceptual batch size for fine-tuning
+    micro_batch_size: 8           # Per-device batch size
+    gradient_accumulation_steps: 4  # 32 / 8 = 4
     
-    # Task-specific epochs
+    # Learning rate schedule
+    lr_scheduler: "cosine"
+    warmup_steps_ratio: 0.1       # 10% linear warmup
+    min_lr_ratio: 0.1
+    
+    # Task-specific epochs (3-10 range with early stopping)
     epochs:
       sst2: 5
-      mnli: 10
+      mnli: 8
       qnli: 5
-      mrpc: 10
+      mrpc: 8
       cola: 10
-      stsb: 10
-      qqp: 5
+      stsb: 6
+      qqp: 3
       rte: 10
       wnli: 10
     
-    # Early stopping
+    # Early stopping to prevent overfitting
     early_stopping_patience: 3
     early_stopping_threshold: 1e-4
+    monitor_metric: "eval_accuracy"  # Primary metric for early stopping
 
 # SDM-specific configuration
 sdm:
@@ -95,7 +104,9 @@ sgh_peft:
   lora_alpha_factor: 2
   lora_dropout: 0.05
   
-  # Importance thresholds
+  # Importance thresholds (θ for SGH-PEFT as 75th percentile)
+  # Will be explored as hyperparameter with sensitivity analysis in appendix
+  importance_percentile: 75        # 75th percentile threshold for layer importance
   high_importance_mean_threshold: 0.5
   high_importance_active_threshold: 60.0
   medium_importance_mean_threshold: 0.0
@@ -105,22 +116,34 @@ sgh_peft:
   # Adaptation settings
   apply_sparsity_mask: true
   freeze_base_model: true
+  
+  # Hyperparameter exploration
+  sensitivity_analysis: true       # Include sensitivity analysis for threshold θ
 
 # Hardware and system configuration
 system:
-  # Target hardware
+  # Target hardware - NVIDIA A100 (80GB memory)
   device: "cuda"
-  mixed_precision: "bf16"         # Use bfloat16 for A100
-  compile: true                   # Use torch.compile for optimization
+  mixed_precision: "bf16"         # PyTorch AMP with bfloat16 dtype for A100
+  compile: true                   # torch.compile for optimization
   
-  # Memory optimization
+  # CUDA environment
+  cuda_version: "12.1"
+  pytorch_version: "2.2"
+  
+  # Memory optimization for A100
   gradient_checkpointing: true
   dataloader_num_workers: 4
   pin_memory: true
   
   # Distributed training
-  ddp: true                       # Use DistributedDataParallel
+  ddp: true                       # DistributedDataParallel
   find_unused_parameters: false
+  
+  # Reproducibility settings
+  deterministic: true             # torch.backends.cudnn.deterministic = True
+  benchmark: false                # torch.backends.cudnn.benchmark = False (for reproducibility)
+  seed: 42                        # Fixed random seed across all libraries
   
 # Evaluation configuration
 evaluation:
@@ -128,13 +151,14 @@ evaluation:
   eval_interval: 1000             # Evaluate every 1000 steps
   save_interval: 5000             # Save checkpoint every 5000 steps
   
-  # Metrics
-  compute_flops: true
-  profile_memory: true
-  measure_latency: true
+  # Profiling Tools (fvcore for FLOPs, torch.profiler for latency/memory)
+  compute_flops: true             # fvcore for FLOPs calculation
+  profile_memory: true            # torch.profiler for memory profiling
+  measure_latency: true           # torch.profiler for detailed latency profiling
+  archive_profiling_logs: true    # Archive profiling logs with unique experiment IDs
   
-  # Statistical testing
-  num_seeds: 5                    # Run with 5 different seeds
+  # Statistical testing for reproducibility
+  num_seeds: 5                    # Run with 5 different seeds (seed=42 base)
   confidence_level: 0.95          # 95% confidence intervals
 
 # Logging and checkpointing
@@ -152,7 +176,9 @@ logging:
   monitor_metric: "eval/perplexity"
   mode: "min"
 
-# Reproducibility
-seed: 42
-deterministic: true
-benchmark: false                  # Set to true for consistent hardware 
+# Reproducibility (Scientific Rigor)
+seed: 42                          # Fixed random seed for PyTorch, NumPy, Python
+deterministic: true               # torch.backends.cudnn.deterministic = True
+benchmark: false                  # torch.backends.cudnn.benchmark = False (for reproducibility)
+
+# Note: Acknowledging potential minor trade-off in performance for scientific rigor 

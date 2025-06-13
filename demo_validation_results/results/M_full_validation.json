@@ -1,0 +1,10 @@
+{
+  "model_group": "M_full",
+  "flops_per_token": 375000,
+  "latency_ms_per_token": 1.8797474091340396,
+  "throughput_tokens_per_sec": 512.8205128205128,
+  "total_parameters": 11250000,
+  "trainable_parameters": 450000,
+  "perplexity": 8.245,
+  "glue_sst2_accuracy": 0.8677653136499409
+}

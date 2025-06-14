@@ -3,10 +3,19 @@ Correlation-based Scan Permutation (CSP) Analysis - Pillar 1
 This script implements offline analysis to find optimal state permutations for memory efficiency.
 """
 
+import sys
+import os
+# Add the parent directory to Python path to enable imports
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+sys.path.insert(0, parent_dir)
+
 import argparse
 import torch
 import torch.nn as nn
 from tqdm import tqdm
+
+# Import using absolute path to avoid conflicts
 from models.baseline_ssm import BaselineSSM
 from data.wikitext103 import get_wiktext103_dataloader
 from utils.logger import setup_logger

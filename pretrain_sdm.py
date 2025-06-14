@@ -270,7 +270,7 @@ def main():
     
     # Create data loaders
     train_dataloader = get_wiktext103_dataloader(
-        tokenizer=tokenizer,
+        tokenizer_name="gpt2",
         batch_size=config['training']['batch_size'],
         max_length=config['data']['max_length'],
         split="train",
@@ -278,7 +278,7 @@ def main():
     )
     
     val_dataloader = get_wiktext103_dataloader(
-        tokenizer=tokenizer,
+        tokenizer_name="gpt2",
         batch_size=config['training']['batch_size'],
         max_length=config['data']['max_length'],
         split="validation",

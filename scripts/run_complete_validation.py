@@ -189,13 +189,31 @@ class CompleteValidationOrchestrator:
                 'training': {
                     'batch_size': 8,
                     'learning_rate': 1e-4,
+                    'weight_decay': 0.1,
+                    'warmup_steps': 100,
                     'max_steps': 1000,  # Reduced for demo
-                    'warmup_steps': 100
+                    'gradient_accumulation_steps': 4,
+                    'max_grad_norm': 1.0
+                },
+                'data': {
+                    'dataset_name': 'wikitext-103-raw-v1',
+                    'max_length': 1024,
+                    'num_workers': 4
                 },
                 'sdm': {
                     'lambda_sparsity': 0.01,
-                    'gumbel_temp_start': 5.0,
-                    'gumbel_temp_end': 0.1
+                    'initial_temperature': 5.0,
+                    'final_temperature': 0.1,
+                    'target_sparsity': 0.5,
+                    'sparsity_warmup_steps': 100,
+                    'mask_threshold': 0.0
+                },
+                'logging': {
+                    'log_interval': 50,
+                    'eval_interval': 1000,
+                    'save_interval': 2500,
+                    'wandb_project': None,
+                    'run_name': 'sdm_pretrain_validation'
                 }
             }
             

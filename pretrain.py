@@ -310,6 +310,16 @@ def main():
                             loss.item(),
                             args.output_dir
                         )
+                        
+                        # Also save as final model format for other scripts to use
+                        final_model_path = os.path.join(args.output_dir, "model.pt")
+                        torch.save({
+                            'model_state_dict': accelerator.unwrap_model(model).state_dict(),
+                            'config': config,
+                            'step': global_step,
+                            'loss': loss.item()
+                        }, final_model_path)
+                        logger.info(f"Model also saved as {final_model_path}")
                 
                 # Check if training is complete
                 if global_step >= num_training_steps:
@@ -325,6 +335,16 @@ def main():
                             loss.item(),
                             args.output_dir
                         )
+                        
+                        # Save final model in the expected format for other scripts
+                        final_model_path = os.path.join(args.output_dir, "model.pt")
+                        torch.save({
+                            'model_state_dict': accelerator.unwrap_model(model).state_dict(),
+                            'config': config,
+                            'step': global_step,
+                            'loss': loss.item()
+                        }, final_model_path)
+                        logger.info(f"Final model saved to {final_model_path}")
                     
                     return
 

@@ -87,7 +87,8 @@ def collect_state_trajectories(model: nn.Module, dataloader, num_samples: int, d
     # Concatenate all trajectories. Each element is (B, L, d_state).
     # We want a single matrix of (Total_Timesteps, d_state) where d_state=N
     if STATE_TRAJECTORIES:
-        H_traj_all = torch.cat([t.flatten(0, 1) for t in STATE_TRAJECTORIES], dim=0)
+        # Move trajectories to CPU for correlation computation to avoid GPU memory issues
+        H_traj_all = torch.cat([t.flatten(0, 1).cpu() for t in STATE_TRAJECTORIES], dim=0)
         
         # As per the paper, transpose to get (d_state, Total_Timesteps) for correlation calc.
         # Each row is now the trajectory of one state dimension over time.
@@ -162,17 +163,20 @@ def reorder_model_weights(state_dict: dict, permutation_vector: torch.Tensor) ->
         # Identify parameters that interact with the state dimension (d_state)
         # This requires knowledge of the Mamba architecture's parameter naming.
         
+        # Ensure permutation vector is on the same device as the parameter
+        pi_device = pi.to(param.device)
+        
         # Target: A_log parameter in MambaBlock. Shape: (d_inner, d_state)
         if "A_log" in layer_key:
             # We permute the columns corresponding to the d_state dimension
-            state_dict[layer_key] = torch.index_select(param, dim=1, index=pi)
+            state_dict[layer_key] = torch.index_select(param, dim=1, index=pi_device)
             reordered_count += 1
 
         # Target: dt_proj weight. Shape: (d_inner, d_state) 
         elif "dt_proj.weight" in layer_key:
             # We permute the columns corresponding to the d_state dimension
             if param.shape[1] == d_state:  # Ensure dimension matches
-                state_dict[layer_key] = torch.index_select(param, dim=1, index=pi)
+                state_dict[layer_key] = torch.index_select(param, dim=1, index=pi_device)
                 reordered_count += 1
 
         # Target: x_proj weight, which generates B and C. Shape: (2 * d_state, d_inner)
@@ -180,8 +184,8 @@ def reorder_model_weights(state_dict: dict, permutation_vector: torch.Tensor) ->
             # This projects to B and C concatenated. We must permute the rows.
             # The first `d_state` rows correspond to B, the next to C.
             if param.shape[0] == 2 * d_state:  # Ensure dimension matches
-                perm_for_B = pi
-                perm_for_C = pi + d_state
+                perm_for_B = pi_device
+                perm_for_C = pi_device + d_state
                 combined_perm = torch.cat([perm_for_B, perm_for_C])
                 state_dict[layer_key] = torch.index_select(param, dim=0, index=combined_perm)
                 reordered_count += 1

@@ -239,11 +239,11 @@ def main():
     # Use the WikiText-103 validation set, as specified in the proposal
     try:
         dataloader = get_wiktext103_dataloader(
-            tokenizer=tokenizer,
             batch_size=16,  # Smaller batch size for memory efficiency
             max_length=512,
             split="validation",
-            num_workers=0
+            num_workers=0,
+            tokenizer_name="gpt2"  # Use the correct parameter name
         )
         logger.info("Created WikiText-103 validation dataloader")
     except Exception as e:

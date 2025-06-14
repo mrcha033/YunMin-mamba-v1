@@ -22,12 +22,12 @@ import shutil
 from pathlib import Path
 from typing import Dict, Any
 
-# Add project root to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path with higher priority
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+sys.path.insert(0, parent_dir)
 
 from models.baseline_ssm import BaselineSSM
-from scripts.run_csp_analysis import run_csp_analysis
-from scripts.analyze_sdm import main as analyze_sdm
 
 
 class FullPipelineOrchestrator:
@@ -91,27 +91,41 @@ class FullPipelineOrchestrator:
         # Run CSP analysis
         print("Running CSP analysis...")
         try:
-            # This would call the CSP analysis script
-            csp_results = run_csp_analysis(
-                model=base_model,
-                output_dir=str(self.csp_dir),
-                num_samples=64,
-                max_length=1024
-            )
-            
-            # Save M_CSP model
-            csp_model_path = self.csp_dir / "model_csp.pt"
+            # Save base model temporarily for CSP analysis
+            temp_base_path = self.csp_dir / "temp_base.pt"
             torch.save({
                 'model_state_dict': base_model.state_dict(),
-                'csp_results': csp_results,
                 'config': config,
-                'stage': 'M_CSP'
-            }, csp_model_path)
+                'stage': 'M_base'
+            }, temp_base_path)
             
-            print(f"✓ CSP analysis completed, M_CSP saved to {csp_model_path}")
-            print(f"✓ Optimal permutation applied with correlation improvement")
+            # Run CSP analysis script
+            import subprocess
+            import sys
             
-            return str(csp_model_path)
+            cmd = [
+                sys.executable, "scripts/run_csp_analysis.py",
+                "--model_path", str(temp_base_path),
+                "--output_path", str(self.csp_dir / "model_csp.pt"),
+                "--num_samples", "64"
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=os.getcwd())
+            
+            if result.returncode == 0:
+                print("✓ CSP analysis completed successfully")
+                # Clean up temp file
+                temp_base_path.unlink()
+            
+                csp_model_path = self.csp_dir / "model_csp.pt"
+                print(f"✓ CSP analysis completed, M_CSP saved to {csp_model_path}")
+                print(f"✓ Optimal permutation applied with correlation improvement")
+                
+                return str(csp_model_path)
+            else:
+                print(f"❌ CSP analysis failed with return code {result.returncode}")
+                print(f"stderr: {result.stderr}")
+                raise RuntimeError("CSP analysis subprocess failed")
             
         except Exception as e:
             print(f"❌ CSP analysis failed: {e}")

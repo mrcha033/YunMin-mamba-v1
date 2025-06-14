@@ -22,7 +22,10 @@ import numpy as np
 from sklearn.metrics import accuracy_score, f1_score
 
 import sys
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path with higher priority
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+sys.path.insert(0, parent_dir)
 
 from models.sdm_ssm import SDM_SSM
 from models.sgh_peft import (

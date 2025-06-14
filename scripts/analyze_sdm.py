@@ -20,8 +20,10 @@ import yaml
 import os
 import sys
 
-# Add project root to path
-sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# Add project root to path with higher priority
+script_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(script_dir)
+sys.path.insert(0, parent_dir)
 
 from models.sdm_ssm import SDM_SSM, SDM_MambaBlock
 from data.wikitext103 import get_wiktext103_dataloader

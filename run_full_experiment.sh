@@ -139,10 +139,8 @@ if [[ ! -f "${CSP_CHECKPOINT}" ]]; then
     
     python scripts/run_csp_analysis.py \
         --model_path "${BASELINE_CHECKPOINT}" \
-        --config "${CONFIG_FILE}" \
-        --output_dir "${CHECKPOINTS_DIR}/csp" \
-        --num_samples 1000 \
-        --max_length 1024
+        --output_path "${CSP_CHECKPOINT}" \
+        --num_samples 1000
     
     echo "✅ CSP analysis completed"
 else
@@ -183,9 +181,7 @@ fi
 
 # Step A4: SDM Analysis
 echo "Step A4: SDM Analysis..."
-python scripts/analyze_sdm.py \
-    --model_path "${SDM_CHECKPOINT}" \
-    --output_dir "${RESULTS_DIR}/sdm_analysis"
+python scripts/analyze_sdm.py
 
 echo "✅ Phase A completed successfully"
 
@@ -210,7 +206,6 @@ if [[ ! -f "${FULL_CHECKPOINT}" ]]; then
     
     python scripts/run_full_pipeline.py \
         --base_model "${BASELINE_CHECKPOINT}" \
-        --sdm_model "${SDM_CHECKPOINT}" \
         --output_dir "${CHECKPOINTS_DIR}/full" \
         --config "${CONFIG_FILE}"
     
@@ -230,10 +225,9 @@ for task in "${GLUE_TASKS[@]}"; do
     if [[ ! -f "${TASK_CHECKPOINT}" ]]; then
         python scripts/run_finetuning.py \
             --config "${CONFIG_FILE}" \
-            --model_path "${FULL_CHECKPOINT}" \
+            --sdm_model "${FULL_CHECKPOINT}" \
             --task "${task}" \
-            --output_dir "${CHECKPOINTS_DIR}/full" \
-            --experiment_name "${EXPERIMENT_NAME}_${task}"
+            --output_dir "${CHECKPOINTS_DIR}/full"
         
         echo "✅ ${task} fine-tuning completed"
     else
@@ -277,8 +271,7 @@ for model_name in "${!MODEL_VARIANTS[@]}"; do
             --checkpoint "${model_path}" \
             --config "${CONFIG_FILE}" \
             --validate_all \
-            --output_dir "${RESULTS_DIR}" \
-            --num_seeds 5
+            --output_dir "${RESULTS_DIR}"
         
         echo "✅ ${model_name} validation completed"
     else
@@ -291,8 +284,7 @@ echo "Step C3: Generating analysis and plots..."
 
 python scripts/analyze_results.py \
     --results_dir "${RESULTS_DIR}" \
-    --output_dir "${RESULTS_DIR}/plots" \
-    --experiment_name "${EXPERIMENT_NAME}"
+    --output_dir "${RESULTS_DIR}/plots"
 
 echo "✅ Analysis and plots generated"
 

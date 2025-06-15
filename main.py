@@ -334,10 +334,10 @@ class UnifiedTrainingPipeline:
         pretrain_config = self.config['training']['pretrain']
         optimizer = torch.optim.AdamW(
             model.parameters(),
-            lr=pretrain_config['learning_rate'],
-            weight_decay=pretrain_config['weight_decay'],
-            betas=(pretrain_config['beta1'], pretrain_config['beta2']),
-            eps=pretrain_config['eps']
+            lr=float(pretrain_config['learning_rate']),
+            betas=(float(pretrain_config['beta1']), float(pretrain_config['beta2'])),
+            eps=float(pretrain_config['eps']),
+            weight_decay=float(pretrain_config['weight_decay'])
         )
         
         # Setup learning rate scheduler with warmup
@@ -345,7 +345,7 @@ class UnifiedTrainingPipeline:
         warmup_steps = int(0.1 * total_steps)  # 10% warmup
         scheduler = torch.optim.lr_scheduler.OneCycleLR(
             optimizer,
-            max_lr=pretrain_config['learning_rate'],
+            max_lr=float(pretrain_config['learning_rate']),
             total_steps=total_steps,
             pct_start=0.1,  # 10% warmup
             anneal_strategy='linear'
@@ -397,7 +397,7 @@ class UnifiedTrainingPipeline:
                 # Backward pass
                 optimizer.zero_grad()
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), pretrain_config['max_grad_norm'])
+                torch.nn.utils.clip_grad_norm_(model.parameters(), float(pretrain_config['max_grad_norm']))
                 optimizer.step()
                 
                 # Update counters
@@ -649,8 +649,8 @@ class UnifiedTrainingPipeline:
             # Setup optimizer for fine-tuning
             optimizer = torch.optim.AdamW(
                 [p for p in model.parameters() if p.requires_grad],
-                lr=finetune_config['learning_rate'],
-                weight_decay=finetune_config['weight_decay']
+                lr=float(finetune_config['learning_rate']),
+                weight_decay=float(finetune_config['weight_decay'])
             )
             
             task_epochs = finetune_config['epochs'].get(task, 3)  # Reduced for efficiency

@@ -17,6 +17,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, Dict
 import math
+from torch.utils.checkpoint import checkpoint
 
 
 class SelectiveSSM(nn.Module):
@@ -132,20 +133,14 @@ class SelectiveSSM(nn.Module):
             self.temperature = gumbel_temp
             self.stochastic_mask = None
             self.deterministic_mask = None
-
-    def forward(self, x: torch.Tensor, return_hidden_states: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
-        """
-        Forward pass through selective SSM.
         
-        Args:
-            x: Input tensor of shape (B, L, D)
-            return_hidden_states: If true, also returns the hidden state sequence.
+        # --- Gradient Checkpointing ---
+        # As per the paper, gradient checkpointing is enabled to reduce memory consumption.
+        self.use_checkpoint = True
 
-        Returns:
-            A tuple of (output, mask, hidden_states).
-            - output: Output tensor of shape (B, L, D)
-            - mask: The SDM mask used (if use_sdm=True), otherwise None.
-            - hidden_states: Sequence of hidden states (if requested), otherwise None.
+    def _forward_impl(self, x: torch.Tensor, return_hidden_states: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """
+        The actual forward logic, designed to be wrapped by gradient checkpointing.
         """
         B, L, D = x.shape
         
@@ -180,6 +175,26 @@ class SelectiveSSM(nn.Module):
         hidden_states_output = h_seq if return_hidden_states else None
         
         return output, mask, hidden_states_output
+
+    def forward(self, x: torch.Tensor, return_hidden_states: bool = False) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """
+        Forward pass through selective SSM, with optional gradient checkpointing.
+        """
+        if self.use_checkpoint and self.training:
+            # The checkpoint function cannot handle keyword arguments, so we handle `return_hidden_states` here.
+            # We create a lambda that captures the arguments to _forward_impl.
+            # Note: The output of the checkpointed function must be a tensor or a tuple of tensors.
+            
+            # Since `return_hidden_states` is not a tensor, we pass it as a standard argument.
+            # The dummy argument is needed for the checkpoint function's API if inputs are not tensors.
+            def create_forward_lambda(hidden_flag):
+                return lambda dummy_arg, inp: self._forward_impl(inp, return_hidden_states=hidden_flag)
+
+            # We pass a dummy tensor because all inputs to checkpoint must require gradients.
+            dummy_tensor = torch.tensor([], requires_grad=True)
+            return checkpoint(create_forward_lambda(return_hidden_states), dummy_tensor, x)
+        else:
+            return self._forward_impl(x, return_hidden_states=return_hidden_states)
     
     def selective_scan(self, x: torch.Tensor) -> torch.Tensor:
         """

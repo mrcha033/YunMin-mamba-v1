@@ -57,7 +57,7 @@ sgh_peft:
 
 # System Configuration
 system:
-  device: "cpu"                   # Default to CPU for dry run
+  device: "cuda"                   # Default to CPU for dry run
   seed: 42
   deterministic: true
   mixed_precision: "bf16"

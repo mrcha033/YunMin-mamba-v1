@@ -14,7 +14,8 @@ training:
     max_grad_norm: 1.0
 
 data:
-  tasks: ["cola", "sst2", "mrpc", "qqp", "mnli", "qnli", "rte", "wnli"]
+  # Default GLUE subset used in experiments
+  tasks: ["sst2", "mrpc", "qnli", "mnli"]
   validation_split: 0.1
 
 # SGH-PEFT configuration

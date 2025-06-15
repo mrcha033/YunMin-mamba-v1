@@ -266,8 +266,8 @@ def parse_args():
                         help="Path to fine-tuning configuration file")
     parser.add_argument("--sdm_model", type=str, required=True,
                         help="Path to pre-trained SDM model checkpoint")
-    parser.add_argument("--task", type=str, default="cola",
-                        help="GLUE task name (cola, sst2, mrpc, etc.)")
+    parser.add_argument("--task", type=str, default="sst2",
+                        help="GLUE task name (sst2, mrpc, qnli, mnli)")
     parser.add_argument("--output_dir", type=str, default="./checkpoints/sgh_peft",
                         help="Output directory for checkpoints")
     parser.add_argument("--max_length", type=int, default=512,

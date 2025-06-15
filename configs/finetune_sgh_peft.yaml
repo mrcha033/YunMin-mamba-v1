@@ -45,6 +45,7 @@ training:
   monitor_metric: "eval_accuracy"
 
 # Task-specific configurations for GLUE benchmark
+# Default experiments use the subset: [sst2, mrpc, qnli, mnli]
 tasks:
   cola:      # Corpus of Linguistic Acceptability
     num_labels: 2

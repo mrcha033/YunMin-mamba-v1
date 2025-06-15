@@ -41,6 +41,7 @@ try:
     elif '${dataset_name}' == 'glue':
         from data.glue import get_glue_dataloader
         # Test loading GLUE tasks
+        # Core tasks used by default
         tasks = ['sst2', 'mrpc', 'qnli', 'mnli']
         for task in tasks:
             try:
@@ -82,9 +83,9 @@ cat > "${DATA_DIR}/dataset_info.json" << EOF
         "splits": ["train", "validation", "test"]
     },
     "glue": {
-        "status": "ready", 
+        "status": "ready",
         "cache_dir": "${DATA_DIR}",
-        "tasks": ["sst2", "mrpc", "qnli", "mnli", "cola", "stsb", "qqp", "rte", "wnli"]
+        "tasks": ["sst2", "mrpc", "qnli", "mnli"]
     },
     "setup_date": "$(date -Iseconds)"
 }

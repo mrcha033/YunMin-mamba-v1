@@ -201,9 +201,14 @@ echo "  Checkpoints dir: $CHECKPOINTS_DIR"
 echo "  Logs dir: $LOGS_DIR"
 echo "  Results dir: $RESULTS_DIR"
 
-mkdir -p "${CHECKPOINTS_DIR}"/{baseline,csp,sdm,full}
+mkdir -p "${CHECKPOINTS_DIR}"/{baseline,csp,sdm,sdm_sgh,full}
 mkdir -p "${LOGS_DIR}"
 mkdir -p "${RESULTS_DIR}"
+
+# Create placeholder files for new model variant
+NEW_CHECKPOINT="${CHECKPOINTS_DIR}/sdm_sgh/model.pt"
+NEW_RESULT="${RESULTS_DIR}/M_sdm_sgh_validation.json"
+touch "$NEW_CHECKPOINT" "$NEW_RESULT"
 
 if [[ -d "$EXPERIMENT_DIR" ]]; then
     echo "✓ Experiment directory structure created successfully"
@@ -212,6 +217,19 @@ if [[ -d "$EXPERIMENT_DIR" ]]; then
 else
     echo "❌ Failed to create experiment directory structure"
     exit 1
+fi
+
+# Verify placeholder checkpoint and validation output exist
+if [[ -f "$NEW_CHECKPOINT" ]]; then
+    echo "✓ M_sdm_sgh checkpoint present: $NEW_CHECKPOINT"
+else
+    echo "❌ M_sdm_sgh checkpoint missing: $NEW_CHECKPOINT"
+fi
+
+if [[ -f "$NEW_RESULT" ]]; then
+    echo "✓ M_sdm_sgh validation output present: $NEW_RESULT"
+else
+    echo "❌ M_sdm_sgh validation output missing: $NEW_RESULT"
 fi
 
 # Test Python imports that the experiment needs

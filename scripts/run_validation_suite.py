@@ -30,7 +30,12 @@ sys.path.insert(0, parent_dir)
 
 from models.baseline_ssm import BaselineSSM
 from models.sdm_ssm import SDM_SSM
-from models.sgh_peft import SGHPEFTModel, create_sgh_peft_model
+from models.sgh_peft import (
+    SGHPEFTModel,
+    SGHPEFTConfig,
+    MaskedLoRALayer,
+    create_sgh_peft_model,
+)
 from data.wikitext103 import get_wiktext103_dataloader
 from data.glue import get_glue_dataloader
 from utils.profiling import count_parameters, measure_latency
@@ -401,21 +406,112 @@ class ValidationSuite:
     
     def create_sgh_peft_with_proxy(self, base_model: nn.Module) -> nn.Module:
         """Create SGH-PEFT model with proxy importance scores (weight magnitude)."""
-        # This would implement SGH-PEFT using weight magnitude as proxy importance
-        # For now, return the base model (placeholder)
-        return base_model
+        # Compute layer importance using average weight magnitude
+        importance_scores: Dict[str, Dict[str, Any]] = {}
+
+        with torch.no_grad():
+            for idx, layer in enumerate(base_model.layers):
+                layer_name = f"layers.{idx}"
+
+                magnitudes = []
+                for param in layer.parameters():
+                    magnitudes.append(param.detach().abs().mean())
+
+                if magnitudes:
+                    mean_imp = torch.stack(magnitudes).mean().item()
+                else:
+                    mean_imp = 0.0
+
+                d_inner = getattr(layer, "d_inner", layer.in_proj.weight.shape[0] // 2)
+
+                importance_scores[layer_name] = {
+                    "mean_importance": mean_imp,
+                    "std_importance": 0.0,
+                    "max_importance": mean_imp,
+                    "min_importance": mean_imp,
+                    "active_channels": d_inner,
+                    "total_channels": d_inner,
+                    "sparsity_level": 0.0,
+                    "sparsity_mask": torch.ones(d_inner),
+                }
+
+        config = SGHPEFTConfig(apply_sparsity_mask=False, freeze_base_model=True)
+        return create_sgh_peft_model(base_model, config, layer_importance_scores=importance_scores)
     
     def create_magnitude_pruned_lora(self, base_model: nn.Module) -> nn.Module:
         """Create magnitude-pruned model with uniform LoRA."""
-        # This would implement magnitude pruning + uniform LoRA
-        # For now, return the base model (placeholder)
-        return base_model
+        model = base_model
+
+        # Freeze original parameters
+        for p in model.parameters():
+            p.requires_grad = False
+
+        sparsity = 0.176  # Match M_SDM parameter reduction (~17.6%)
+        rank = 4
+        alpha_factor = 2
+        dropout = 0.05
+
+        with torch.no_grad():
+            for layer in model.layers:
+                d_inner = layer.in_proj.weight.shape[0] // 2
+
+                w = layer.in_proj.weight.data.view(2, d_inner, -1)
+                importance = w.abs().mean(dim=(0, 2))
+
+                keep = max(1, int(d_inner * (1 - sparsity)))
+                topk = torch.topk(importance, keep, largest=True).indices
+
+                mask = torch.zeros(d_inner, dtype=torch.bool, device=w.device)
+                mask[topk] = True
+
+                layer.in_proj.weight.data[:d_inner][~mask] = 0
+                layer.in_proj.weight.data[d_inner:][~mask] = 0
+                layer.out_proj.weight.data[:, ~mask] = 0
+                layer.conv1d.weight.data[~mask] = 0
+                layer.conv1d.weight.data[:, ~mask] = 0
+
+        for layer in model.layers:
+            layer.in_proj = MaskedLoRALayer(
+                layer.in_proj,
+                rank=rank,
+                alpha=rank * alpha_factor,
+                dropout=dropout,
+            )
+            layer.out_proj = MaskedLoRALayer(
+                layer.out_proj,
+                rank=rank,
+                alpha=rank * alpha_factor,
+                dropout=dropout,
+            )
+
+        return model
     
     def create_standard_lora(self, base_model: nn.Module) -> nn.Module:
         """Create model with standard uniform LoRA."""
-        # This would implement standard LoRA adaptation
-        # For now, return the base model (placeholder)
-        return base_model
+        model = base_model
+
+        for p in model.parameters():
+            p.requires_grad = False
+
+        rank = 4
+        alpha_factor = 2
+        dropout = 0.05
+
+        for layer in model.layers:
+            layer.in_proj = MaskedLoRALayer(
+                layer.in_proj,
+                rank=rank,
+                alpha=rank * alpha_factor,
+                dropout=dropout,
+            )
+            layer.out_proj = MaskedLoRALayer(
+                layer.out_proj,
+                rank=rank,
+                alpha=rank * alpha_factor,
+                dropout=dropout,
+            )
+
+        return model
     
     def evaluate_glue_task(self, model: nn.Module, task: str = "sst2") -> float:
         """

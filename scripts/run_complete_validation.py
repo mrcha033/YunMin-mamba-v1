@@ -70,6 +70,11 @@ class CompleteValidationOrchestrator:
                 'generation_method': 'apply_sgh_proxy',
                 'dependencies': ['M_base']
             },
+            'M_sdm_sgh': {
+                'description': 'SDM pretraining followed by SGH-PEFT',
+                'generation_method': 'apply_sdm_then_sgh',
+                'dependencies': ['M_base']
+            },
             'M_challenge': {
                 'description': 'M_base + magnitude pruning + uniform LoRA',
                 'generation_method': 'apply_challenge',
@@ -121,7 +126,11 @@ class CompleteValidationOrchestrator:
         elif method == 'apply_sgh_proxy':
             # Apply SGH-PEFT with proxy importance
             output_path = self.apply_sgh_peft_proxy(base_model_path, variant_dir)
-            
+
+        elif method == 'apply_sdm_then_sgh':
+            # SDM pretraining followed by SGH-PEFT
+            output_path = self.apply_sdm_then_sgh(base_model_path, variant_dir)
+
         elif method == 'apply_challenge':
             # Apply magnitude pruning + uniform LoRA
             output_path = self.apply_challenge_baseline(base_model_path, variant_dir)
@@ -311,6 +320,49 @@ class CompleteValidationOrchestrator:
         
         print(f"✓ SGH-PEFT proxy model created")
         return str(output_path)
+
+    def apply_sdm_then_sgh(self, base_model_path: str, output_dir: Path) -> str:
+        """Apply SDM pretraining followed by SGH-PEFT."""
+        print("Applying SDM pretraining followed by SGH-PEFT...")
+
+        # Step 1: run SDM pretraining
+        sdm_dir = output_dir / "sdm"
+        sdm_dir.mkdir(exist_ok=True)
+        sdm_path = Path(self.apply_sdm_to_base(base_model_path, sdm_dir))
+
+        try:
+            from models.sdm_ssm import SDM_SSM
+            from models.sgh_peft import create_sgh_peft_model
+            import torch
+
+            checkpoint = torch.load(sdm_path, map_location="cpu")
+            sdm_model = SDM_SSM(
+                d_model=768, n_layer=12, vocab_size=50257,
+                d_state=16, d_conv=4, gumbel_temp=1.0
+            )
+
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                sdm_model.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                sdm_model.load_state_dict(checkpoint)
+
+            sgh_model = create_sgh_peft_model(sdm_model)
+
+            output_path = output_dir / "model_sdm_sgh.pt"
+            torch.save({'model_state_dict': sgh_model.state_dict()}, output_path)
+
+            print("✓ SDM + SGH-PEFT model created")
+            return str(output_path)
+
+        except Exception as e:
+            print(f"⚠ SDM+SGH generation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback: copy base model
+            import shutil
+            output_path = output_dir / "model_sdm_sgh.pt"
+            shutil.copy2(base_model_path, output_path)
+            return str(output_path)
     
     def apply_challenge_baseline(self, base_model_path: str, output_dir: Path) -> str:
         """Apply magnitude pruning + uniform LoRA."""

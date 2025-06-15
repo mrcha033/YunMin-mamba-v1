@@ -256,7 +256,7 @@ class PermutationOptimizer:
             initial_permutation = self._solve_tsp_greedy(correlation_matrix_np)
             logger.info("   Refining tour with 2-opt local search...")
             permutation, _ = solve_tsp_local_search(
-                distance_matrix_np, x0=initial_permutation, perturbation_scheme="2-opt"
+                distance_matrix_np, x0=initial_permutation, perturbation_scheme="ps2"
             )
 
         elif self.config.tsp_solver == "2-opt":
@@ -265,7 +265,7 @@ class PermutationOptimizer:
             # with a simple initial tour, which is a common and effective approach.
             initial_permutation = list(range(d_state))
             permutation, _ = solve_tsp_local_search(
-                distance_matrix_np, x0=initial_permutation, perturbation_scheme="2-opt"
+                distance_matrix_np, x0=initial_permutation, perturbation_scheme="ps2"
             )
         else:
             raise ValueError(f"Unknown TSP solver: {self.config.tsp_solver}")

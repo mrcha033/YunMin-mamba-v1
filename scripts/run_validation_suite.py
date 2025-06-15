@@ -588,9 +588,6 @@ class ValidationSuite:
         Returns:
             Task accuracy/F1 score
         """
-        # Simplified GLUE evaluation (placeholder)
-        # In practice, this would run the full fine-tuning and evaluation loop
-        
         try:
             # Create task-specific evaluation dataloader
             eval_dataloader = get_glue_dataloader(
@@ -598,13 +595,39 @@ class ValidationSuite:
                 tokenizer=self.tokenizer,
                 batch_size=16,
                 max_length=512,
-                split="validation"
+                split="validation",
             )
-            
-            # Placeholder evaluation (return random score for now)
-            # In practice, this would run inference and calculate metrics
-            return np.random.uniform(0.8, 0.95)
-            
+
+            model.eval()
+            all_predictions = []
+            all_labels = []
+
+            with torch.no_grad():
+                for batch in eval_dataloader:
+                    input_ids = batch["input_ids"].to(self.device)
+                    attention_mask = batch["attention_mask"].to(self.device)
+                    labels = batch["labels"]
+
+                    outputs = model(input_ids, attention_mask=attention_mask)
+                    if hasattr(outputs, "logits"):
+                        predictions = outputs.logits
+                    else:
+                        predictions = outputs
+
+                    all_predictions.append(predictions.cpu().numpy())
+                    all_labels.append(labels.numpy())
+
+            all_predictions = np.concatenate(all_predictions, axis=0)
+            all_labels = np.concatenate(all_labels, axis=0)
+
+            metrics = compute_glue_metrics(task, all_predictions, all_labels)
+
+            # Return accuracy/F1 if available, otherwise the first metric
+            for key in ["accuracy", "f1"]:
+                if key in metrics:
+                    return metrics[key]
+            return next(iter(metrics.values())) if metrics else -1.0
+
         except Exception as e:
             print(f"Warning: GLUE evaluation failed: {e}")
             return -1.0

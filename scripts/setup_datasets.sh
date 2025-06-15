@@ -25,9 +25,9 @@ sys.path.append('${PROJECT_ROOT}')
 
 try:
     if '${dataset_name}' == 'wikitext103':
-        from data.wikitext103 import get_wiktext103_dataloader
+        from data.wikitext103 import get_wikitext103_dataloader
         # Test loading a small sample
-        dataloader = get_wiktext103_dataloader(
+        dataloader = get_wikitext103_dataloader(
             split='train',
             batch_size=2,
             max_length=128,

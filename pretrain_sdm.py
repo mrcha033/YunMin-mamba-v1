@@ -18,7 +18,7 @@ from accelerate import Accelerator
 import wandb
 
 from models.sdm_ssm import SDM_SSM, SDM_MambaBlock
-from data.wikitext103 import get_wiktext103_dataloader
+from data.wikitext103 import get_wikitext103_dataloader
 from utils.logger import setup_logger, setup_wandb, log_model_info, log_training_info
 from utils.profiling import count_parameters
 
@@ -310,7 +310,7 @@ def main():
     num_workers = int(data_config.get('num_workers', 4))
     
     # Create data loaders
-    train_dataloader = get_wiktext103_dataloader(
+    train_dataloader = get_wikitext103_dataloader(
         tokenizer_name="gpt2",
         batch_size=micro_batch_size,
         max_length=max_length,
@@ -318,7 +318,7 @@ def main():
         num_workers=num_workers
     )
     
-    val_dataloader = get_wiktext103_dataloader(
+    val_dataloader = get_wikitext103_dataloader(
         tokenizer_name="gpt2",
         batch_size=micro_batch_size,
         max_length=max_length,

@@ -192,7 +192,7 @@ class WikiText103Dataset(Dataset):
         }
 
 
-def get_wiktext103_dataloader(
+def get_wikitext103_dataloader(
     split: str = "train",
     batch_size: int = 8,
     max_length: int = 1024,
@@ -344,7 +344,7 @@ def verify_dataset_loading():
     
     try:
         # Test small batch
-        dataloader = get_wiktext103_dataloader(
+        dataloader = get_wikitext103_dataloader(
             split="validation",
             batch_size=2,
             max_length=512,

@@ -90,21 +90,21 @@ class UnifiedTrainingPipeline:
         self.config = self.load_unified_config(config.config_path)
         self.pipeline_config = config
         
-        # 🔧 DRY RUN MODE: Reduce resource usage for testing
-        if config.dry_run:
-            self.logger.info("🧪 DRY RUN MODE ENABLED - Reducing resource usage")
-            self.apply_dry_run_settings()
-        
         # Setup experiment tracking
         self.experiment_name = config.experiment_name or f"unified_exp_{int(time.time())}"
         self.output_dir = Path(self.config['paths']['output_dir']) / self.experiment_name
         self.output_dir.mkdir(parents=True, exist_ok=True)
         
-        # Setup logging
+        # Setup logging FIRST to ensure it's available for all initialization steps
         self.logger = setup_logger(
             name="unified_pipeline",
             log_file=self.output_dir / "pipeline.log"
         )
+        
+        # 🔧 DRY RUN MODE: Reduce resource usage for testing
+        if config.dry_run:
+            self.logger.info("🧪 DRY RUN MODE ENABLED - Reducing resource usage")
+            self.apply_dry_run_settings()
         
         # Device setup
         self.device = torch.device(config.device)

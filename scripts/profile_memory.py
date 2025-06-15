@@ -41,7 +41,7 @@ from models.baseline_ssm import BaselineSSM
 from models.sdm_ssm import SDM_SSM
 from models.sgh_peft import SGHPEFTModel
 from utils.profiling import count_parameters
-from data.wikitext103 import get_wiktext103_dataloader
+from data.wikitext103 import get_wikitext103_dataloader
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)

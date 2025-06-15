@@ -15,7 +15,7 @@ from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 from accelerate import Accelerator
 
 from models.baseline_ssm import BaselineSSM
-from data.wikitext103 import get_wiktext103_dataloader
+from data.wikitext103 import get_wikitext103_dataloader
 from utils.logger import setup_logger, setup_wandb, log_model_info, log_training_info
 from utils.profiling import count_parameters, count_flops
 
@@ -182,7 +182,7 @@ def main():
         except Exception as e:
             logger.warning(f"FLOPs counting failed: {e}")
     
-    train_dataloader = get_wiktext103_dataloader(
+    train_dataloader = get_wikitext103_dataloader(
         tokenizer_name="gpt2",
         batch_size=micro_batch_size,
         max_length=max_length,
@@ -190,7 +190,7 @@ def main():
         num_workers=num_workers
     )
     
-    val_dataloader = get_wiktext103_dataloader(
+    val_dataloader = get_wikitext103_dataloader(
         tokenizer_name="gpt2",
         batch_size=micro_batch_size,
         max_length=max_length,

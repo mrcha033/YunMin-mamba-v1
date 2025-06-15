@@ -17,7 +17,7 @@ from tqdm import tqdm
 
 # Import using absolute path to avoid conflicts
 from models.baseline_ssm import BaselineSSM
-from data.wikitext103 import get_wiktext103_dataloader
+from data.wikitext103 import get_wikitext103_dataloader
 from utils.logger import setup_logger
 
 # A list to store the captured hidden states from the forward hook
@@ -242,7 +242,7 @@ def main():
     
     # Use the WikiText-103 validation set, as specified in the proposal
     try:
-        dataloader = get_wiktext103_dataloader(
+        dataloader = get_wikitext103_dataloader(
             batch_size=16,  # Smaller batch size for memory efficiency
             max_length=512,
             split="validation",

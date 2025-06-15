@@ -14,7 +14,7 @@ authors:
   - family-names: "Cha"
     given-names: "Yunmin"
     orcid: "https://orcid.org/0000-0000-0000-0000"  # Update with actual ORCID
-    email: "yunmin.cha@example.com"  # Update with actual email
+    email: "mrcha033@yonsei.ac.kr"  # Update with actual email
 repository-code: "https://github.com/yunmin-cha/hardware-data-parameter-codesign"
 url: "https://github.com/yunmin-cha/hardware-data-parameter-codesign"
 license: MIT

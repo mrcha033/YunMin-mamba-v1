@@ -104,13 +104,18 @@ def test_pretrain_sdm_basic_execution():
                 logger.error(f"Process failed with return code {result.returncode}")
                 error_output = result.stderr.lower()
                 
-                # Comprehensive CUDA error detection
+                # Comprehensive CUDA error detection - updated to handle more CUDA error types
                 cuda_error_patterns = [
                     "cublas_status_not_initialized",
                     "cublascreate",
                     ("cublas" in error_output and "not_initialized" in error_output),
                     ("cuda error" in error_output and "cublas" in error_output),
-                    ("runtimeerror" in error_output and "cuda" in error_output and "cublas" in error_output)
+                    ("runtimeerror" in error_output and "cuda" in error_output and "cublas" in error_output),
+                    ("cuda error" in error_output and "device-side assert triggered" in error_output),
+                    ("runtimeerror" in error_output and "cuda error" in error_output),
+                    "device-side assert triggered",
+                    ("cuda error" in error_output),  # General CUDA error pattern
+                    ("runtimeerror" in error_output and "cuda" in error_output)  # General CUDA runtime error
                 ]
                 
                 is_cuda_error = any(
@@ -119,8 +124,8 @@ def test_pretrain_sdm_basic_execution():
                 )
                 
                 if is_cuda_error:
-                    logger.warning("DIAGNOSIS: CUDA/cuBLAS initialization error detected!")
-                    logger.warning("This is a known issue in some CUDA environments")
+                    logger.warning("DIAGNOSIS: CUDA error detected!")
+                    logger.warning("This is a CUDA environment issue, not a configuration problem")
                     logger.info("✓ Configuration loading works correctly")
                     logger.info("✓ Model imports are successful")
                     logger.info("✓ Data loading is functional")

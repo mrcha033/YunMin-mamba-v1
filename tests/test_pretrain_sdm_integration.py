@@ -435,10 +435,10 @@ def main():
     logger.info(f"Finished at: {time.strftime('%Y-%m-%d %H:%M:%S')}")
     
     if passed == len(results):
-        logger.info("🎉 All integration tests passed!")
+        logger.info("All integration tests passed!")
         return 0
     else:
-        logger.error("💥 Some tests failed!")
+        logger.error("Some tests failed!")
         return 1
 
 

@@ -40,6 +40,9 @@ training:
   max_steps: 2000              # Task-dependent, adjust per GLUE task
   gradient_accumulation_steps: 2
   max_grad_norm: 1.0
+  early_stopping_patience: 3
+  early_stopping_threshold: 0.0
+  monitor_metric: "eval_accuracy"
 
 # Task-specific configurations for GLUE benchmark
 tasks:

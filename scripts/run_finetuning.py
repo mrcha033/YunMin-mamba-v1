@@ -404,6 +404,15 @@ def main():
     global_step = 0
     running_loss = 0.0
     best_accuracy = 0.0
+
+    # Early stopping configuration
+    early_stop_patience = config['training'].get('early_stopping_patience')
+    early_stop_threshold = config['training'].get('early_stopping_threshold', 0.0)
+    monitor_metric = config['training'].get('monitor_metric', 'eval_accuracy')
+    # Normalize metric key from config to match evaluate_model output
+    monitor_key = monitor_metric.replace('eval_', '').replace('eval/', '')
+    best_metric = float('-inf')
+    wait_count = 0
     
     criterion = nn.CrossEntropyLoss()
     
@@ -454,12 +463,12 @@ def main():
                 if global_step % config['logging']['eval_interval'] == 0:
                     logger.info("Running evaluation...")
                     eval_metrics = evaluate_model(model, val_dataloader, accelerator.device)
-                    
+
                     logger.info(f"Evaluation Results:")
                     logger.info(f"  Accuracy: {eval_metrics['accuracy']:.4f}")
                     logger.info(f"  F1: {eval_metrics['f1']:.4f}")
                     logger.info(f"  Loss: {eval_metrics['loss']:.4f}")
-                    
+
                     if accelerator.is_main_process and config['logging'].get('wandb_project'):
                         wandb.log({
                             "eval/accuracy": eval_metrics['accuracy'],
@@ -467,8 +476,19 @@ def main():
                             "eval/loss": eval_metrics['loss'],
                             "train/step": global_step
                         })
-                    
-                    # Save best model
+
+                    # Track metric for early stopping
+                    current_metric = eval_metrics.get(monitor_key)
+                    if current_metric is not None:
+                        if current_metric > best_metric + early_stop_threshold:
+                            best_metric = current_metric
+                            wait_count = 0
+                        else:
+                            wait_count += 1
+                    else:
+                        wait_count += 1
+
+                    # Save best model based on accuracy
                     if eval_metrics['accuracy'] > best_accuracy:
                         best_accuracy = eval_metrics['accuracy']
                         if accelerator.is_main_process:
@@ -481,8 +501,20 @@ def main():
                                 args.output_dir,
                                 config
                             )
-                    
+
                     model.train()
+
+                    # Early stopping check
+                    if early_stop_patience is not None and wait_count >= early_stop_patience:
+                        logger.info(
+                            f"Early stopping triggered after {early_stop_patience} evaluations "
+                            f"without improvement in {monitor_metric}."
+                        )
+                        final_metrics = eval_metrics
+                        logger.info("Final Evaluation Results:")
+                        logger.info(f"  Best {monitor_key}: {best_metric:.4f}")
+                        logger.info(f"  Final {monitor_key}: {current_metric:.4f}")
+                        return
                 
                 # Check if training is complete
                 if global_step >= config['training']['max_steps']:

@@ -201,14 +201,54 @@ echo "==========================================================================
 # GLUE tasks to evaluate
 GLUE_TASKS=("sst2" "mrpc" "qnli" "mnli")
 
-# Step B1: Generate M_full model
-echo "Step B1: Generating M_full model..."
-FULL_CHECKPOINT="${CHECKPOINTS_DIR}/full/model_full.pt"
-
 # Additional model checkpoints
 SGH_CHECKPOINT="${CHECKPOINTS_DIR}/sgh/model_sgh.pt"
 CHALLENGE_CHECKPOINT="${CHECKPOINTS_DIR}/challenge/model_challenge.pt"
 SDM_SGH_CHECKPOINT="${CHECKPOINTS_DIR}/sdm_sgh/model_sdm_sgh.pt"
+FULL_CHECKPOINT="${CHECKPOINTS_DIR}/full/model_full.pt"
+
+# Step B1: Generate M_SGH (SGH-PEFT with proxy importance)
+echo "Step B1: Generating M_SGH..."
+
+if [[ ! -f "${SGH_CHECKPOINT}" ]]; then
+    python scripts/run_sgh_proxy.py \
+        --checkpoint "${BASELINE_CHECKPOINT}" \
+        --config "${CONFIG_FILE}" \
+        --output "${SGH_CHECKPOINT}"
+    echo "✅ M_SGH model generated"
+else
+    echo "✅ M_SGH checkpoint found, skipping generation"
+fi
+
+# Step B2: Generate M_sdm_sgh (SDM pretraining followed by SGH-PEFT)
+echo "Step B2: Generating M_sdm_sgh..."
+
+if [[ ! -f "${SDM_SGH_CHECKPOINT}" ]]; then
+    python scripts/run_sdm_then_sgh.py \
+        --sdm_checkpoint "${SDM_CHECKPOINT}" \
+        --config "${CONFIG_FILE}" \
+        --output "${SDM_SGH_CHECKPOINT}"
+    echo "✅ M_sdm_sgh model generated"
+else
+    echo "✅ M_sdm_sgh checkpoint found, skipping generation"
+fi
+
+# Step B3: Generate M_challenge (magnitude pruning + uniform LoRA)
+echo "Step B3: Generating M_challenge..."
+
+if [[ ! -f "${CHALLENGE_CHECKPOINT}" ]]; then
+    python scripts/run_challenge_baseline.py \
+        --checkpoint "${BASELINE_CHECKPOINT}" \
+        --sdm_checkpoint "${SDM_CHECKPOINT}" \
+        --config "${CONFIG_FILE}" \
+        --output "${CHALLENGE_CHECKPOINT}"
+    echo "✅ M_challenge model generated"
+else
+    echo "✅ M_challenge checkpoint found, skipping generation"
+fi
+
+# Step B4: Generate M_full model
+echo "Step B4: Generating M_full model..."
 
 if [[ ! -f "${FULL_CHECKPOINT}" ]]; then
     echo "Running full pipeline to generate M_full..."
@@ -223,8 +263,8 @@ else
     echo "✅ M_full checkpoint found, skipping generation"
 fi
 
-# Step B2: Fine-tune on GLUE tasks
-echo "Step B2: Fine-tuning on GLUE tasks..."
+# Step B5: Fine-tune on GLUE tasks
+echo "Step B5: Fine-tuning on GLUE tasks..."
 
 for task in "${GLUE_TASKS[@]}"; do
     echo "Fine-tuning on ${task}..."

@@ -241,7 +241,7 @@ def main():
         vocab_size=config['model']['vocab_size'],
         d_state=config['model']['d_state'],
         d_conv=config['model']['d_conv'],
-        gumbel_temp=config['sdm']['initial_temperature']
+        gumbel_temp=config['sdm'].get('initial_temperature', config['sdm'].get('gumbel_temp_start', 5.0))
     )
     
     # Load base model if specified (init_from takes precedence over base_model)
@@ -346,7 +346,7 @@ def main():
     running_sparsity_loss = 0.0
     
     # SDM hyperparameters
-    lambda_sparsity = config['sdm']['lambda_sparsity']
+    lambda_sparsity = config['sdm'].get('lambda_sparsity', 0.01)
     
     logger.info("Starting SDM pre-training...")
     logger.info(f"Sparsity regularization weight (λ): {lambda_sparsity}")
@@ -357,8 +357,8 @@ def main():
             current_temp = adaptive_temperature_schedule(
                 global_step, 
                 num_training_steps,
-                config['sdm']['initial_temperature'],
-                config['sdm']['final_temperature']
+                config['sdm'].get('initial_temperature', config['sdm'].get('gumbel_temp_start', 5.0)),
+                config['sdm'].get('final_temperature', config['sdm'].get('gumbel_temp_end', 0.1))
             )
             update_model_temperature(accelerator.unwrap_model(model), current_temp)
             

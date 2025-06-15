@@ -1,0 +1,36 @@
+# Minimal test configuration for pretrain_sdm.py
+# Ultra-small model for fast testing
+
+model:
+  d_model: 64          # Very small
+  n_layer: 2           # Only 2 layers
+  vocab_size: 1000     # Small vocab
+  d_state: 8           # Small state
+  d_conv: 4
+
+training:
+  pretrain:
+    batch_size: 4      # Tiny batch
+    micro_batch_size: 2
+    learning_rate: 1e-3
+    weight_decay: 0.01
+    warmup_steps: 5    # Very few warmup steps
+    max_epochs: 1      # Just 1 epoch for testing
+    max_grad_norm: 1.0
+
+data:
+  max_length: 128      # Short sequences
+  num_workers: 0       # No multiprocessing for tests
+
+sdm:
+  lambda_sparsity: 0.01
+  gumbel_temp_start: 5.0    # Using main config format
+  gumbel_temp_end: 0.1
+  target_sparsity: 0.5
+
+logging:
+  log_interval: 5
+  eval_interval: 10
+  save_interval: 20
+  wandb_project: null  # Disable wandb for tests
+  run_name: "test_run" 

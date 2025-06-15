@@ -312,12 +312,48 @@ class CompleteValidationOrchestrator:
         """Apply SGH-PEFT with proxy importance scores."""
         print("Applying SGH-PEFT with proxy importance...")
         
-        # For now, create a placeholder model
-        # In practice, this would implement SGH-PEFT with weight magnitude proxy
-        import shutil
+        from models.baseline_ssm import BaselineSSM
+        from models.sgh_peft import SGHPEFTConfig, create_sgh_peft_model
+        import torch
+
+        # Load base model
+        base_model = BaselineSSM(
+            d_model=768, n_layer=12, vocab_size=50257,
+            d_state=16, d_conv=4
+        )
+        checkpoint = torch.load(base_model_path, map_location="cpu")
+        if "model_state_dict" in checkpoint:
+            base_model.load_state_dict(checkpoint["model_state_dict"])
+        else:
+            base_model.load_state_dict(checkpoint)
+
+        # Compute weight-magnitude importance scores
+        importance_scores = {}
+        with torch.no_grad():
+            for idx, layer in enumerate(base_model.layers):
+                layer_name = f"layers.{idx}"
+                mags = [p.detach().abs().mean() for p in layer.parameters()]
+                mean_imp = torch.stack(mags).mean().item() if mags else 0.0
+                d_inner = getattr(layer, "d_inner", layer.in_proj.weight.shape[0] // 2)
+                importance_scores[layer_name] = {
+                    "mean_importance": mean_imp,
+                    "std_importance": 0.0,
+                    "max_importance": mean_imp,
+                    "min_importance": mean_imp,
+                    "active_channels": d_inner,
+                    "total_channels": d_inner,
+                    "sparsity_level": 0.0,
+                    "sparsity_mask": torch.ones(d_inner),
+                }
+
+        config = SGHPEFTConfig(apply_sparsity_mask=False, freeze_base_model=True)
+        sgh_model = create_sgh_peft_model(
+            base_model, config, layer_importance_scores=importance_scores
+        )
+
         output_path = output_dir / "model_sgh.pt"
-        shutil.copy2(base_model_path, output_path)
-        
+        torch.save({"model_state_dict": sgh_model.state_dict()}, output_path)
+
         print(f"✓ SGH-PEFT proxy model created")
         return str(output_path)
 
@@ -368,12 +404,99 @@ class CompleteValidationOrchestrator:
         """Apply magnitude pruning + uniform LoRA."""
         print("Applying challenge baseline (magnitude pruning + uniform LoRA)...")
         
-        # For now, create a placeholder model
-        # In practice, this would implement magnitude-based pruning + uniform LoRA
-        import shutil
+        from models.baseline_ssm import BaselineSSM
+        from models.sgh_peft import MaskedLoRALayer
+        import torch
+
+        # Load base model
+        model = BaselineSSM(
+            d_model=768, n_layer=12, vocab_size=50257,
+            d_state=16, d_conv=4
+        )
+        checkpoint = torch.load(base_model_path, map_location="cpu")
+        if "model_state_dict" in checkpoint:
+            model.load_state_dict(checkpoint["model_state_dict"])
+        else:
+            model.load_state_dict(checkpoint)
+
+        # Determine sparsity ratio from M_SDM if available
+        sparsity_ratio = 0.176
+        sdm_checkpoint = self.models_dir / "M_SDM" / "model_sdm.pt"
+        if sdm_checkpoint.is_file():
+            ckpt = torch.load(sdm_checkpoint, map_location="cpu")
+            state_dict = ckpt.get("model_state_dict", ckpt)
+            z_keys = [k for k in state_dict.keys() if k.endswith("z_logits")]
+            total = 0
+            kept = 0
+            for k in z_keys:
+                z = state_dict[k]
+                total += z.numel()
+                kept += (z > 0).float().sum().item()
+            if total > 0:
+                sparsity_ratio = 1.0 - kept / total
+                print(f"✓ SDM sparsity ratio detected: {sparsity_ratio:.2%}")
+        else:
+            print(f"Using default sparsity ratio: {sparsity_ratio:.2%}")
+
+        # Freeze original parameters
+        for p in model.parameters():
+            p.requires_grad = False
+
+        if sparsity_ratio > 0:
+            print(f"Applying magnitude-based pruning with {sparsity_ratio:.2%} sparsity...")
+
+            channel_scores = []
+            for layer in model.layers:
+                weight = layer.in_proj.weight.data[:layer.d_inner]
+                channel_scores.append(weight.abs().mean(dim=1))
+
+            flat_scores = torch.cat(channel_scores)
+            k = int(len(flat_scores) * sparsity_ratio)
+            threshold = flat_scores.kthvalue(k).values.item() if k > 0 else -float("inf")
+
+            idx = 0
+            for layer in model.layers:
+                n = layer.d_inner
+                scores = flat_scores[idx:idx+n]
+                idx += n
+                mask = (scores > threshold).float()
+                layer.in_proj.weight.data[:n] *= mask.view(-1, 1)
+                layer.in_proj.weight.data[n:] *= mask.view(-1, 1)
+                layer.out_proj.weight.data *= mask.view(1, -1)
+                layer.conv1d.weight.data *= mask.view(-1, 1, 1)
+
+        # Apply uniform LoRA
+        rank = 4
+        alpha_factor = 2
+        dropout = 0.05
+        print(f"Applying uniform LoRA (rank={rank}, alpha={rank*alpha_factor}) to all layers...")
+
+        for layer in model.layers:
+            layer.in_proj = MaskedLoRALayer(
+                layer.in_proj,
+                rank=rank,
+                alpha=rank * alpha_factor,
+                dropout=dropout,
+            )
+            layer.out_proj = MaskedLoRALayer(
+                layer.out_proj,
+                rank=rank,
+                alpha=rank * alpha_factor,
+                dropout=dropout,
+            )
+
+            for param in [
+                layer.conv1d.weight,
+                layer.x_proj.weight,
+                layer.dt_proj.weight,
+                layer.A_log,
+                layer.D,
+            ]:
+                param.requires_grad = False
+
         output_path = output_dir / "model_challenge.pt"
-        shutil.copy2(base_model_path, output_path)
-        
+        torch.save({"model_state_dict": model.state_dict()}, output_path)
+
         print(f"✓ Challenge baseline model created")
         return str(output_path)
     

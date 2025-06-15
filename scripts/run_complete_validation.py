@@ -401,6 +401,9 @@ class CompleteValidationOrchestrator:
             return str(output_path)
     
     def apply_challenge_baseline(self, base_model_path: str, output_dir: Path) -> str:
+        """Apply magnitude pruning and uniform LoRA using helper script."""
+        print("Applying challenge baseline (magnitude pruning + uniform LoRA)...")
+    def apply_challenge_baseline(self, base_model_path: str, output_dir: Path) -> str:
         """Apply magnitude pruning + uniform LoRA."""
         print("Applying challenge baseline (magnitude pruning + uniform LoRA)...")
         
@@ -498,7 +501,7 @@ class CompleteValidationOrchestrator:
         torch.save({"model_state_dict": model.state_dict()}, output_path)
 
         print(f"✓ Challenge baseline model created")
-        return str(output_path)
+        return str(output_path)        return str(output_path)
     
     def run_full_pipeline(self, base_model_path: str, output_dir: Path) -> str:
         """Run the complete three-pillar pipeline."""

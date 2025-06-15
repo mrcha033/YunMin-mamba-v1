@@ -1,0 +1,62 @@
+# Memory-optimized configuration for 370M model
+model:
+  d_model: 1024
+  n_layer: 24
+  vocab_size: 50257
+  d_state: 16
+  d_conv: 4
+  expand: 2
+  expected_params: 370000000
+
+# Memory-optimized training configuration
+training:
+  pretrain:
+    optimizer: "AdamW"
+    learning_rate: 2e-4
+    weight_decay: 0.1
+    beta1: 0.9
+    beta2: 0.98
+    eps: 1e-6
+    
+    # MEMORY OPTIMIZATION: Aggressive gradient accumulation
+    batch_size: 128               # Conceptual batch size
+    micro_batch_size: 1           # VERY small micro batch for 370M
+    gradient_accumulation_steps: 128  # 128 / 1 = 128 steps
+    max_epochs: 20
+    warmup_steps_ratio: 0.1
+    
+    # Memory-saving techniques
+    max_grad_norm: 1.0
+    dropout: 0.1
+    lr_scheduler: "cosine"
+    min_lr_ratio: 0.1
+    
+    # Enable memory optimizations
+    use_gradient_checkpointing: true
+    use_mixed_precision: true
+    optimizer_offload: false  # Keep false for A100
+    
+  finetune:
+    # Even more aggressive for fine-tuning
+    batch_size: 16
+    micro_batch_size: 1
+    gradient_accumulation_steps: 16
+    learning_rate: 1e-4
+    
+    # Memory-efficient fine-tuning
+    use_gradient_checkpointing: true
+    use_mixed_precision: true
+    freeze_embeddings: true  # Save memory
+
+# Memory-optimized data loading
+data:
+  max_length: 512  # Reduced from 1024 for 370M model
+  num_workers: 2   # Reduced to save CPU memory
+  pin_memory: false  # Disable to save GPU memory
+  prefetch_factor: 1
+
+# System optimizations
+system:
+  torch_compile: false  # Disable for memory savings
+  flash_attention: true  # Enable if available
+  memory_efficient_attention: true 

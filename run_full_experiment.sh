@@ -45,7 +45,11 @@ mkdir -p "${LOGS_DIR}"
 mkdir -p "${RESULTS_DIR}"
 
 # Configuration files
-CONFIG_FILE="${PROJECT_ROOT}/configs/mamba_${MODEL_SIZE}.yaml"
+if [[ "${MODEL_SIZE}" == "370m" ]]; then
+    CONFIG_FILE="${PROJECT_ROOT}/configs/mamba_370m_memory_optimized.yaml"
+else
+    CONFIG_FILE="${PROJECT_ROOT}/configs/mamba_${MODEL_SIZE}.yaml"
+fi
 
 # Logging setup
 LOG_FILE="${LOGS_DIR}/experiment.log"

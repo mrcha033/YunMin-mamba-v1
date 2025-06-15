@@ -245,7 +245,7 @@ class SelectiveSSM(nn.Module):
         Performs the scan operation by breaking the sequence into smaller chunks.
         This is the core memory optimization for the forward pass.
         """
-        B, L, D = x.shape
+        batch_size, L, D = x.shape
         N = A.shape[-1]
 
         if L % chunk_size != 0:
@@ -255,7 +255,7 @@ class SelectiveSSM(nn.Module):
 
         num_chunks = L // chunk_size
         
-        h = torch.zeros(B, D, N, device=x.device, dtype=x.dtype)
+        h = torch.zeros(batch_size, D, N, device=x.device, dtype=x.dtype)
         
         ys, h_states = [], []
         

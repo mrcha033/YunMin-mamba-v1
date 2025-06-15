@@ -27,6 +27,7 @@ class CSPConfig:
     analysis_samples: int = 20000  # Number of state samples for correlation analysis
     tsp_solver: str = "greedy_2-opt"  # TSP solver heuristic: "greedy_2-opt", "2-opt", or "simulated_annealing"
     hardware_type: str = "gpu"    # Target hardware: "gpu", "cpu", "tpu"
+    cache_line_size: int = 128    # Cache line size in bytes (e.g., 128 for A100)
 
 
 class CorrelationAnalyzer:

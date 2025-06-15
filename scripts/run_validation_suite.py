@@ -44,8 +44,9 @@ class ValidationSuite:
     Supports evaluation of all model variants:
     - M_base: Original baseline model
     - M_CSP: M_base + CSP permutation (Pillar 1)
-    - M_SDM: M_base + SDM sparsity (Pillar 2)  
+    - M_SDM: M_base + SDM sparsity (Pillar 2)
     - M_SGH: M_base + SGH-PEFT with proxy importance
+    - M_sdm_sgh: SDM pretraining followed by SGH-PEFT
     - M_challenge: M_base + magnitude pruning + uniform LoRA
     - M_full: M_base + CSP + SDM + SGH-PEFT (all pillars)
     """
@@ -89,7 +90,7 @@ class ValidationSuite:
         elif group_name in ['M_SDM', 'M_SGH']:
             # SDM-based models
             model = SDM_SSM(**model_config, gumbel_temp=1.0)
-        elif group_name == 'M_full':
+        elif group_name in ['M_full', 'M_sdm_sgh']:
             # Full pipeline model (SDM + SGH-PEFT)
             base_model = SDM_SSM(**model_config, gumbel_temp=1.0)
             # Load base SDM checkpoint first
@@ -360,7 +361,7 @@ class ValidationSuite:
             base_model = self.load_model_for_group(model_group, base_checkpoint, config)
             
             # Create fine-tuned model based on group
-            if model_group == 'M_full':
+            if model_group in ['M_full', 'M_sdm_sgh']:
                 # Already has SGH-PEFT applied
                 finetuned_model = base_model
             elif model_group == 'M_SGH':
@@ -525,6 +526,7 @@ Model Groups:
   M_CSP       - M_base + CSP permutation (Pillar 1)
   M_SDM       - M_base + SDM sparsity (Pillar 2)
   M_SGH       - M_base + SGH-PEFT with proxy importance
+  M_sdm_sgh   - SDM pretraining followed by SGH-PEFT
   M_challenge - M_base + magnitude pruning + uniform LoRA
   M_full      - M_base + CSP + SDM + SGH-PEFT (all pillars)
 
@@ -538,7 +540,7 @@ Examples:
     )
     
     parser.add_argument("--model_group", type=str, required=True,
-                       choices=['M_base', 'M_CSP', 'M_SDM', 'M_SGH', 'M_challenge', 'M_full'],
+                       choices=['M_base', 'M_CSP', 'M_SDM', 'M_SGH', 'M_sdm_sgh', 'M_challenge', 'M_full'],
                        help="Model group identifier")
     parser.add_argument("--checkpoint", type=str, required=True,
                        help="Path to the model checkpoint")

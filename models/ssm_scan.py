@@ -183,16 +183,12 @@ class SelectiveSSM(nn.Module):
         if self.use_checkpoint and self.training:
             # The checkpoint function cannot handle keyword arguments, so we handle `return_hidden_states` here.
             # We create a lambda that captures the arguments to _forward_impl.
-            # Note: The output of the checkpointed function must be a tensor or a tuple of tensors.
-            
-            # Since `return_hidden_states` is not a tensor, we pass it as a standard argument.
-            # The dummy argument is needed for the checkpoint function's API if inputs are not tensors.
             def create_forward_lambda(hidden_flag):
                 return lambda dummy_arg, inp: self._forward_impl(inp, return_hidden_states=hidden_flag)
 
             # We pass a dummy tensor because all inputs to checkpoint must require gradients.
-            dummy_tensor = torch.tensor([], requires_grad=True)
-            return checkpoint(create_forward_lambda(return_hidden_states), dummy_tensor, x)
+            dummy_tensor = torch.tensor([], requires_grad=True, device=x.device)
+            return checkpoint(create_forward_lambda(return_hidden_states), dummy_tensor, x, use_reentrant=True)
         else:
             return self._forward_impl(x, return_hidden_states=return_hidden_states)
     
@@ -227,7 +223,7 @@ class SelectiveSSM(nn.Module):
         
         # Perform selective scan
         if self.pscan:
-            y, h_seq = self.selective_scan_parallel(x, dt, A, B_proj, C_proj)
+            y, h_seq = self.scan_with_chunking(x, dt, A, B_proj, C_proj)
         else:
             y, h_seq = self.selective_scan_sequential(x, dt, A, B_proj, C_proj)
         
@@ -236,48 +232,71 @@ class SelectiveSSM(nn.Module):
         
         return y, h_seq
     
-    def selective_scan_parallel(
-        self, 
-        x: torch.Tensor, 
-        dt: torch.Tensor, 
-        A: torch.Tensor, 
-        B: torch.Tensor, 
-        C: torch.Tensor
-    ) -> torch.Tensor:
+    def scan_with_chunking(
+        self,
+        x: torch.Tensor,
+        dt: torch.Tensor,
+        A: torch.Tensor,
+        B: torch.Tensor,
+        C: torch.Tensor,
+        chunk_size: int = 64,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Parallel selective scan using associative scan.
-        
-        This is more efficient for training but requires more memory.
+        Performs the scan operation by breaking the sequence into smaller chunks.
+        This is the core memory optimization for the forward pass.
         """
-        B_batch, L, D = x.shape
+        B, L, D = x.shape
         N = A.shape[-1]
+
+        if L % chunk_size != 0:
+            # For simplicity, we require the sequence length to be divisible by the chunk size.
+            # This can be relaxed with padding if necessary.
+            raise ValueError(f"Sequence length {L} must be divisible by chunk_size {chunk_size}")
+
+        num_chunks = L // chunk_size
         
-        # Discretize A and B
-        # A_discrete = exp(dt * A)
-        # B_discrete = dt * B
-        dt = dt.unsqueeze(-1)  # (B, L, D, 1)
-        A = A.unsqueeze(0).unsqueeze(0)  # (1, 1, D, N)
+        h = torch.zeros(B, D, N, device=x.device, dtype=x.dtype)
         
-        # Discretization
-        dA = torch.exp(dt * A)  # (B, L, D, N)
-        dB = dt * B.unsqueeze(2)  # (B, L, D, N)
+        ys, h_states = [], []
         
-        # Reshape for scan
-        dA = dA.contiguous()
-        dB = dB.contiguous()
-        x = x.unsqueeze(-1)  # (B, L, D, 1)
-        
-        # Parallel scan using custom implementation
-        h = self.parallel_scan(dA, dB * x)  # (B, L, D, N)
-        
-        # Output computation: y = C * h
-        # C is (B, L, N), h is (B, L, D, N) 
-        # We need to sum over the N dimension: h * C -> (B, L, D)
-        C = C.unsqueeze(2)  # (B, L, 1, N) 
-        y = torch.sum(h * C, dim=-1)  # (B, L, D)
-        
-        return y, h # Return hidden states as well
-    
+        for i in range(num_chunks):
+            start = i * chunk_size
+            end = (i + 1) * chunk_size
+            
+            x_chunk = x[:, start:end]
+            dt_chunk = dt[:, start:end]
+            B_chunk = B[:, start:end]
+            C_chunk = C[:, start:end]
+            
+            # Discretize A and B for the current chunk
+            dA_chunk = torch.exp(dt_chunk.unsqueeze(-1) * A.unsqueeze(0).unsqueeze(0)) # (B, chunk_size, D, N)
+            dB_chunk = dt_chunk.unsqueeze(-1) * B_chunk.unsqueeze(2) # (B, chunk_size, D, N)
+            
+            # Run the parallel scan on the chunk
+            # The initial hidden state `h` is broadcasted and added to the input
+            chunk_scan_input = dB_chunk * x_chunk.unsqueeze(-1)
+            
+            # Propagate the hidden state from the previous chunk
+            h_broadcast = torch.einsum('b...n,b...dn->b...dn', dA_chunk, h.unsqueeze(1))
+            
+            # The h from parallel_scan is the sequence of hidden states within the chunk
+            h_chunk = self.parallel_scan(dA_chunk, chunk_scan_input) + h_broadcast
+            
+            # Compute the output for the chunk
+            y_chunk = torch.einsum('bldn,bln->bld', h_chunk, C_chunk)
+            
+            ys.append(y_chunk)
+            h_states.append(h_chunk) # Store for CSP if needed
+            
+            # Update the hidden state for the next chunk
+            h = h_chunk[:, -1]
+
+        # Combine results from all chunks
+        y = torch.cat(ys, dim=1)
+        h_seq = torch.cat(h_states, dim=1).permute(1, 0, 2, 3) # (L, B, D, N)
+
+        return y, h_seq
+
     def selective_scan_sequential(
         self, 
         x: torch.Tensor, 
@@ -419,146 +438,8 @@ def create_ssm_scan_function(
     )
 
 
-class OptimizedSSMScan(nn.Module):
-    """
-    Hardware-optimized SSM scan with memory efficiency improvements.
-    
-    This version includes optimizations for:
-    - Memory usage reduction
-    - Numerical stability  
-    - Hardware acceleration compatibility
-    """
-    
-    def __init__(self, d_inner: int, d_state: int):
-        super().__init__()
-        self.d_inner = d_inner
-        self.d_state = d_state
-        
-        # Use more stable initialization
-        self.register_buffer('eps', torch.tensor(1e-6))
-        
-    def scan_with_checkpointing(
-        self, 
-        x: torch.Tensor, 
-        dt: torch.Tensor, 
-        A: torch.Tensor, 
-        B: torch.Tensor, 
-        C: torch.Tensor,
-        checkpoint_segments: int = 4
-    ) -> torch.Tensor:
-        """
-        Memory-efficient scan with gradient checkpointing.
-        
-        This reduces memory usage by recomputing forward pass segments
-        during backward pass instead of storing all intermediate states.
-        """
-        B_batch, L, D = x.shape
-        
-        if checkpoint_segments <= 1:
-            # Standard computation without checkpointing
-            return self._basic_scan(x, dt, A, B, C)
-        
-        # Split sequence into segments for checkpointing
-        segment_size = L // checkpoint_segments
-        segments_x = []
-        segments_dt = []
-        segments_B = []
-        segments_C = []
-        
-        for i in range(checkpoint_segments):
-            start_idx = i * segment_size
-            end_idx = min((i + 1) * segment_size, L)
-            
-            segments_x.append(x[:, start_idx:end_idx])
-            segments_dt.append(dt[:, start_idx:end_idx])
-            segments_B.append(B[:, start_idx:end_idx])
-            segments_C.append(C[:, start_idx:end_idx])
-        
-        # Process segments with checkpointing
-        outputs = []
-        h = torch.zeros(B_batch, D, self.d_state, device=x.device, dtype=x.dtype)
-        
-        for seg_x, seg_dt, seg_B, seg_C in zip(segments_x, segments_dt, segments_B, segments_C):
-            if self.training:
-                # Use checkpointing during training
-                from torch.utils.checkpoint import checkpoint
-                seg_out, h = checkpoint(self._segment_scan, seg_x, seg_dt, A, seg_B, seg_C, h)
-            else:
-                # No checkpointing during inference
-                seg_out, h = self._segment_scan(seg_x, seg_dt, A, seg_B, seg_C, h)
-            
-            outputs.append(seg_out)
-        
-        return torch.cat(outputs, dim=1)
-    
-    def _segment_scan(
-        self, 
-        x: torch.Tensor, 
-        dt: torch.Tensor, 
-        A: torch.Tensor, 
-        B: torch.Tensor, 
-        C: torch.Tensor,
-        h_init: torch.Tensor
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Process a single segment of the sequence."""
-        B_batch, L_seg, D = x.shape
-        h = h_init.clone()
-        
-        outputs = []
-        
-        for t in range(L_seg):
-            # Current timestep parameters
-            dt_t = dt[:, t, :].unsqueeze(-1)  # (B, D, 1)
-            B_t = B[:, t, :].unsqueeze(1)    # (B, 1, N)
-            C_t = C[:, t, :].unsqueeze(1)    # (B, 1, N)
-            x_t = x[:, t, :].unsqueeze(-1)   # (B, D, 1)
-            
-            # Discretization with numerical stability
-            dA = torch.exp(torch.clamp(dt_t * A.unsqueeze(0), max=10.0))
-            dB = dt_t * B_t
-            
-            # State update
-            h = dA * h + dB * x_t
-            
-            # Output computation
-            y_t = torch.sum(C_t * h, dim=-1)  # (B, D)
-            outputs.append(y_t)
-        
-        return torch.stack(outputs, dim=1), h
-    
-    def _basic_scan(
-        self, 
-        x: torch.Tensor, 
-        dt: torch.Tensor, 
-        A: torch.Tensor, 
-        B: torch.Tensor, 
-        C: torch.Tensor
-    ) -> torch.Tensor:
-        """Basic scan without checkpointing."""
-        B_batch, L, D = x.shape
-        h = torch.zeros(B_batch, D, self.d_state, device=x.device, dtype=x.dtype)
-        
-        outputs = []
-        
-        for t in range(L):
-            dt_t = dt[:, t, :].unsqueeze(-1)
-            B_t = B[:, t, :].unsqueeze(1)
-            C_t = C[:, t, :].unsqueeze(1)
-            x_t = x[:, t, :].unsqueeze(-1)
-            
-            dA = torch.exp(torch.clamp(dt_t * A.unsqueeze(0), max=10.0))
-            dB = dt_t * B_t
-            
-            h = dA * h + dB * x_t
-            y_t = torch.sum(C_t * h, dim=-1)
-            outputs.append(y_t)
-        
-        return torch.stack(outputs, dim=1)
-
-
 # Export main functions for use in other modules
 __all__ = [
     'SelectiveSSM',
     'create_ssm_scan_function', 
-    'OptimizedSSMScan'
 ] 

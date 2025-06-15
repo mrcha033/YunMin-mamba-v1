@@ -6,6 +6,7 @@ This script implements the complete fine-tuning pipeline using SGH-PEFT:
 2. Compute layer-wise importance scores from z_logits
 3. Apply hybrid LoRA/IA³ adapters based on importance
 4. Fine-tune on downstream tasks (GLUE)
+The scheduler supports ``warmup_steps_ratio`` to derive warmup steps from ``max_steps``.
 """
 
 import argparse
@@ -386,9 +387,14 @@ def main():
     )
     
     num_training_steps = config['training']['max_steps']
+    warmup_steps = int(config['training'].get('warmup_steps', 0))
+    warmup_steps_ratio = config['training'].get('warmup_steps_ratio')
+    if warmup_steps_ratio is not None:
+        warmup_steps = int(num_training_steps * float(warmup_steps_ratio))
+
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=config['training']['warmup_steps'],
+        num_warmup_steps=warmup_steps,
         num_training_steps=num_training_steps
     )
     

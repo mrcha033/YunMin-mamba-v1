@@ -3,6 +3,8 @@ SDM Pre-training Script - Pillar 2: Structured Differentiable Masking
 
 This script implements the pre-training of M_SDM with integrated sparsity learning.
 The model learns both task performance and channel importance simultaneously.
+If ``warmup_steps_ratio`` is provided in the configuration, warmup steps are
+calculated as ``int(max_steps * warmup_steps_ratio)``.
 """
 
 import argparse
@@ -290,12 +292,17 @@ def main():
         warmup_steps = int(pretrain_config.get('warmup_steps', 1000))
         max_grad_norm = float(pretrain_config.get('max_grad_norm', 1.0))
         max_steps = int(pretrain_config.get('max_epochs', 20)) * 1000  # Convert epochs to steps estimate
+        warmup_steps_ratio = pretrain_config.get('warmup_steps_ratio')
     else:
         learning_rate = float(training_config.get('learning_rate', 1e-4))
         weight_decay = float(training_config.get('weight_decay', 0.1))
         warmup_steps = int(training_config.get('warmup_steps', 1000))
         max_grad_norm = float(training_config.get('max_grad_norm', 1.0))
         max_steps = int(training_config.get('max_steps', 20000))
+        warmup_steps_ratio = training_config.get('warmup_steps_ratio')
+
+    if warmup_steps_ratio is not None:
+        warmup_steps = int(max_steps * float(warmup_steps_ratio))
     
     # Get data configuration
     data_config = config.get('data', {})

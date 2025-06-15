@@ -30,7 +30,12 @@ sys.path.insert(0, parent_dir)
 
 from models.baseline_ssm import BaselineSSM
 from models.sdm_ssm import SDM_SSM
-from models.sgh_peft import SGHPEFTModel, create_sgh_peft_model
+from models.sgh_peft import (
+    SGHPEFTModel,
+    SGHPEFTConfig,
+    MaskedLoRALayer,
+    create_sgh_peft_model,
+)
 from data.wikitext103 import get_wiktext103_dataloader
 from data.glue import get_glue_dataloader
 from utils.profiling import count_parameters, measure_latency
@@ -404,72 +409,173 @@ class ValidationSuite:
     
     def create_sgh_peft_with_proxy(self, base_model: nn.Module) -> nn.Module:
         """Create SGH-PEFT model with proxy importance scores (weight magnitude)."""
-        # This would implement SGH-PEFT using weight magnitude as proxy importance
-        # For now, return the base model (placeholder)
-        return base_model
+        # Compute layer importance using average weight magnitude
+        importance_scores: Dict[str, Dict[str, Any]] = {}
+
+        with torch.no_grad():
+            for idx, layer in enumerate(base_model.layers):
+                layer_name = f"layers.{idx}"
+
+                magnitudes = []
+                for param in layer.parameters():
+                    magnitudes.append(param.detach().abs().mean())
+
+                if magnitudes:
+                    mean_imp = torch.stack(magnitudes).mean().item()
+                else:
+                    mean_imp = 0.0
+
+                d_inner = getattr(layer, "d_inner", layer.in_proj.weight.shape[0] // 2)
+
+                importance_scores[layer_name] = {
+                    "mean_importance": mean_imp,
+                    "std_importance": 0.0,
+                    "max_importance": mean_imp,
+                    "min_importance": mean_imp,
+                    "active_channels": d_inner,
+                    "total_channels": d_inner,
+                    "sparsity_level": 0.0,
+                    "sparsity_mask": torch.ones(d_inner),
+                }
+
+        config = SGHPEFTConfig(apply_sparsity_mask=False, freeze_base_model=True)
+        return create_sgh_peft_model(base_model, config, layer_importance_scores=importance_scores)
     
-    def create_magnitude_pruned_lora(self, base_model: nn.Module, sdm_checkpoint: Optional[str]) -> nn.Module:
-        """Create magnitude-pruned model with uniform LoRA."""
+def create_magnitude_pruned_lora(self, base_model: nn.Module) -> nn.Module:
+    """
+    Create magnitude-pruned model with uniform LoRA.
+    
+    This implements the M_challenge baseline that combines:
+    1. Magnitude-based channel pruning (17.6% sparsity to match M_SDM)
+    2. Uniform LoRA adaptation across all layers
+    
+    Args:
+        base_model: Base model to adapt
+        
+    Returns:
+        Model with magnitude pruning + uniform LoRA
+    """
+    # Try to detect sparsity from SDM checkpoint if available
+    sparsity_ratio = 0.176  # Default to match M_SDM parameter reduction (~17.6%)
+    
+    # Check if we can extract sparsity from an SDM checkpoint
+    sdm_checkpoint = None  # Could be passed as parameter in future
+    if sdm_checkpoint and os.path.isfile(sdm_checkpoint):
+        checkpoint = torch.load(sdm_checkpoint, map_location="cpu")
+        state_dict = checkpoint.get("model_state_dict", checkpoint)
+        z_keys = [k for k in state_dict.keys() if k.endswith("z_logits")]
+        total = 0
+        kept = 0
+        for k in z_keys:
+            z = state_dict[k]
+            total += z.numel()
+            kept += (z > 0).float().sum().item()
+        if total > 0:
+            sparsity_ratio = 1.0 - kept / total
+            print(f"✓ SDM sparsity ratio detected: {sparsity_ratio:.2%}")
+    else:
+        print(f"Using default sparsity ratio: {sparsity_ratio:.2%}")
 
-        sparsity_ratio = 0.0
-        if sdm_checkpoint and os.path.isfile(sdm_checkpoint):
-            checkpoint = torch.load(sdm_checkpoint, map_location="cpu")
-            state_dict = checkpoint.get("model_state_dict", checkpoint)
-            z_keys = [k for k in state_dict.keys() if k.endswith("z_logits")]
-            total = 0
-            kept = 0
-            for k in z_keys:
-                z = state_dict[k]
-                total += z.numel()
-                kept += (z > 0).float().sum().item()
-            if total > 0:
-                sparsity_ratio = 1.0 - kept / total
-                print(f"✓ SDM sparsity ratio detected: {sparsity_ratio:.2%}")
-        else:
-            print("Warning: SDM checkpoint not found, skipping sparsity estimation")
+    self.last_pruning_sparsity = sparsity_ratio
 
-        self.last_pruning_sparsity = sparsity_ratio
+    # Freeze original parameters
+    for p in base_model.parameters():
+        p.requires_grad = False
 
-        if sparsity_ratio > 0:
-            channel_scores = []
-            for layer in base_model.layers:
-                weight = layer.in_proj.weight.data[:layer.d_inner]
-                channel_scores.append(weight.abs().mean(dim=1))
-            flat = torch.cat(channel_scores)
-            k = int(len(flat) * sparsity_ratio)
-            threshold = flat.kthvalue(k).values.item() if k > 0 else -float("inf")
-            idx = 0
-            for layer in base_model.layers:
-                n = layer.d_inner
-                scores = flat[idx:idx+n]
-                idx += n
-                mask = (scores > threshold).float()
-                layer.in_proj.weight.data[:n] *= mask.view(-1, 1)
-                layer.in_proj.weight.data[n:] *= mask.view(-1, 1)
-                layer.out_proj.weight.data *= mask.view(1, -1)
-                layer.conv1d.weight.data *= mask.view(-1, 1, 1)
-
-        from models.sgh_peft import MaskedLoRALayer
-        rank = 4
+    # Apply magnitude-based pruning if sparsity > 0
+    if sparsity_ratio > 0:
+        print(f"Applying magnitude-based pruning with {sparsity_ratio:.2%} sparsity...")
+        
+        # Collect channel importance scores across all layers
+        channel_scores = []
         for layer in base_model.layers:
-            layer.in_proj = MaskedLoRALayer(layer.in_proj, rank=rank, alpha=rank*2, dropout=0.05)
-            layer.out_proj = MaskedLoRALayer(layer.out_proj, rank=rank, alpha=rank*2, dropout=0.05)
-            for param in [
-                layer.conv1d.weight,
-                layer.x_proj.weight,
-                layer.dt_proj.weight,
-                layer.A_log,
-                layer.D
-            ]:
-                param.requires_grad = False
+            # Use magnitude of input projection weights as importance metric
+            weight = layer.in_proj.weight.data[:layer.d_inner]  # First half for x projection
+            channel_scores.append(weight.abs().mean(dim=1))
+        
+        # Global threshold based on magnitude
+        flat_scores = torch.cat(channel_scores)
+        k = int(len(flat_scores) * sparsity_ratio)
+        threshold = flat_scores.kthvalue(k).values.item() if k > 0 else -float("inf")
+        
+        # Apply pruning masks to each layer
+        idx = 0
+        for layer in base_model.layers:
+            n = layer.d_inner
+            scores = flat_scores[idx:idx+n]
+            idx += n
+            
+            # Create binary mask (1 = keep, 0 = prune)
+            mask = (scores > threshold).float()
+            
+            # Apply mask to weights (zero out pruned channels)
+            layer.in_proj.weight.data[:n] *= mask.view(-1, 1)      # x projection
+            layer.in_proj.weight.data[n:] *= mask.view(-1, 1)      # z projection  
+            layer.out_proj.weight.data *= mask.view(1, -1)         # output projection
+            layer.conv1d.weight.data *= mask.view(-1, 1, 1)        # convolution
 
-        return base_model
+    # Apply uniform LoRA to all layers
+    from models.sgh_peft import MaskedLoRALayer
     
+    rank = 4
+    alpha_factor = 2
+    dropout = 0.05
+    
+    print(f"Applying uniform LoRA (rank={rank}, alpha={rank*alpha_factor}) to all layers...")
+    
+    for layer in base_model.layers:
+        # Replace projections with LoRA-adapted versions
+        layer.in_proj = MaskedLoRALayer(
+            layer.in_proj,
+            rank=rank,
+            alpha=rank * alpha_factor,
+            dropout=dropout,
+        )
+        layer.out_proj = MaskedLoRALayer(
+            layer.out_proj,
+            rank=rank,
+            alpha=rank * alpha_factor,
+            dropout=dropout,
+        )
+        
+        # Freeze remaining parameters (conv1d, SSM parameters)
+        for param in [
+            layer.conv1d.weight,
+            layer.x_proj.weight,
+            layer.dt_proj.weight,
+            layer.A_log,
+            layer.D
+        ]:
+            param.requires_grad = False
+
+    return base_model
+  
     def create_standard_lora(self, base_model: nn.Module) -> nn.Module:
         """Create model with standard uniform LoRA."""
-        # This would implement standard LoRA adaptation
-        # For now, return the base model (placeholder)
-        return base_model
+        model = base_model
+
+        for p in model.parameters():
+            p.requires_grad = False
+
+        rank = 4
+        alpha_factor = 2
+        dropout = 0.05
+
+        for layer in model.layers:
+            layer.in_proj = MaskedLoRALayer(
+                layer.in_proj,
+                rank=rank,
+                alpha=rank * alpha_factor,
+                dropout=dropout,
+            )
+            layer.out_proj = MaskedLoRALayer(
+                layer.out_proj,
+                rank=rank,
+                alpha=rank * alpha_factor,
+                dropout=dropout,
+            )
+
+        return model
     
     def evaluate_glue_task(self, model: nn.Module, task: str = "sst2") -> float:
         """

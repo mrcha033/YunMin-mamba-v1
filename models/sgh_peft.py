@@ -582,7 +582,8 @@ def compute_layer_importance_scores(sdm_model: SDM_SSM) -> Dict[str, Dict[str, A
 
 def create_sgh_peft_model(
     sdm_model: SDM_SSM,
-    config: Optional[SGHPEFTConfig] = None
+    config: Optional[SGHPEFTConfig] = None,
+    layer_importance_scores: Optional[Dict[str, Dict[str, Any]]] = None
 ) -> SGHPEFTModel:
     """
     Create SGH-PEFT model from pre-trained SDM model.
@@ -597,8 +598,11 @@ def create_sgh_peft_model(
     if config is None:
         config = SGHPEFTConfig()
     
-    # Extract importance scores
-    importance_scores = compute_layer_importance_scores(sdm_model)
+    # Extract importance scores if not provided
+    if layer_importance_scores is None:
+        importance_scores = compute_layer_importance_scores(sdm_model)
+    else:
+        importance_scores = layer_importance_scores
     
     # Create SGH-PEFT model
     sgh_peft_model = SGHPEFTModel(

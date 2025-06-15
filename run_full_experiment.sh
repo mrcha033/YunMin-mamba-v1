@@ -40,7 +40,7 @@ LOGS_DIR="${EXPERIMENT_DIR}/logs"
 RESULTS_DIR="${EXPERIMENT_DIR}/results"
 
 # Create directories
-mkdir -p "${CHECKPOINTS_DIR}"/{baseline,csp,sdm,full}
+mkdir -p "${CHECKPOINTS_DIR}"/{baseline,csp,sdm,sgh,challenge,sdm_sgh,full}
 mkdir -p "${LOGS_DIR}"
 mkdir -p "${RESULTS_DIR}"
 
@@ -201,6 +201,11 @@ GLUE_TASKS=("sst2" "mrpc" "qnli" "mnli")
 echo "Step B1: Generating M_full model..."
 FULL_CHECKPOINT="${CHECKPOINTS_DIR}/full/model_full.pt"
 
+# Additional model checkpoints
+SGH_CHECKPOINT="${CHECKPOINTS_DIR}/sgh/model_sgh.pt"
+CHALLENGE_CHECKPOINT="${CHECKPOINTS_DIR}/challenge/model_challenge.pt"
+SDM_SGH_CHECKPOINT="${CHECKPOINTS_DIR}/sdm_sgh/model_sdm_sgh.pt"
+
 if [[ ! -f "${FULL_CHECKPOINT}" ]]; then
     echo "Running full pipeline to generate M_full..."
     
@@ -254,6 +259,9 @@ declare -A MODEL_VARIANTS=(
     ["M_base"]="${BASELINE_CHECKPOINT}"
     ["M_CSP"]="${CSP_CHECKPOINT}"
     ["M_SDM"]="${SDM_CHECKPOINT}"
+    ["M_SGH"]="${SGH_CHECKPOINT}"
+    ["M_challenge"]="${CHALLENGE_CHECKPOINT}"
+    ["M_sdm_sgh"]="${SDM_SGH_CHECKPOINT}"
     ["M_full"]="${FULL_CHECKPOINT}"
 )
 

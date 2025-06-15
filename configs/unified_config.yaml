@@ -1,0 +1,80 @@
+# Unified Configuration for Hardware-Data-Parameter Co-Design Framework
+# Centralizes all hyperparameters to prevent GPU time waste from configuration mismatches
+
+# Model Architecture Configuration
+model:
+  d_model: 768                    # Model dimension (Mamba-130M)
+  n_layer: 12                     # Number of layers
+  vocab_size: 50257               # GPT-2 vocabulary size
+  d_state: 16                     # SSM state dimension
+  d_conv: 4                       # 1D convolution kernel size
+  expand: 2                       # Expansion factor
+  bias: false                     # Use bias in linear layers
+  conv_bias: true                 # Use bias in conv layers
+
+# Training Configuration
+training:
+  pretrain:
+    optimizer: "AdamW"
+    learning_rate: 2e-4           # Peak learning rate
+    weight_decay: 0.1
+    beta1: 0.9
+    beta2: 0.98
+    eps: 1e-6
+    micro_batch_size: 8           # Per-device batch size
+    max_epochs: 20
+    max_steps: 20000
+    log_interval: 100
+    save_interval: 1000
+    max_grad_norm: 1.0
+    
+  finetune:
+    optimizer: "AdamW"
+    learning_rate: 1e-4
+    weight_decay: 0.01
+    micro_batch_size: 8
+    epochs:
+      sst2: 5
+      mrpc: 8
+      qnli: 5
+      mnli: 10
+
+# SDM Configuration
+sdm:
+  lambda_sparsity: 0.01           # Sparsity regularization weight
+  gumbel_temp_start: 5.0          # Initial Gumbel temperature
+  gumbel_temp_end: 0.1            # Final Gumbel temperature
+  target_sparsity: 0.3            # Target sparsity level
+
+# SGH-PEFT Configuration
+sgh_peft:
+  lora_high_rank: 16              # High-rank adaptation
+  lora_low_rank: 4                # Low-rank adaptation
+  lora_alpha_factor: 2            # Alpha scaling factor
+  lora_dropout: 0.05              # Dropout for LoRA
+  apply_sparsity_mask: true       # Apply sparsity mask
+  freeze_base_model: true         # Freeze base parameters
+
+# System Configuration
+system:
+  device: "cpu"                   # Use CPU for testing (change to 'cuda' if GPU available)
+  seed: 42                        # Reproducibility seed
+  deterministic: true             # Deterministic training
+  mixed_precision: "bf16"         # bfloat16 for A100
+
+# Data Configuration
+data:
+  max_length: 1024                # Maximum sequence length
+
+# Logging Configuration
+logging:
+  use_wandb: true                 # Enable W&B logging
+  wandb_project: "hardware-data-parameter-codesign"
+
+# Path Configuration
+paths:
+  output_dir: "./experiments"     # Output directory
+
+# Experimental Setup
+experiments:
+  glue_tasks: ["sst2", "mrpc", "qnli", "mnli"]  # GLUE tasks for validation 

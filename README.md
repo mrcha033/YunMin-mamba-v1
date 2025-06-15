@@ -1,44 +1,128 @@
-# Hardware-Data-Parameter Co-Design for State Space Models
+# Hardware-Data-Parameter Co-Design Framework
 
-This repository implements a three-pillar co-design framework for optimizing State Space Models (SSMs) across hardware, data, and parameter dimensions. The project addresses the fundamental bottlenecks in SSM deployment through coordinated optimization strategies.
+A unified framework for efficient Mamba model training with integrated optimization strategies.
 
-## Overview
+## 🚀 Quick Start
 
-The co-design framework consists of three integrated pillars:
+### Primary Entry Points
 
-1. **Pillar 1: Correlation-based Scan Permutation (CSP)** - Hardware-level optimization targeting memory access patterns in the SSM scan operation
-2. **Pillar 2: Structured Differentiable Masking (SDM)** - Data-level optimization learning sparse channel structures during pre-training
-3. **Pillar 3: Sparsity-Guided Hybrid PEFT (SGH-PEFT)** - Parameter-level optimization using structured importance scores to guide fine-tuning strategies
+#### 1. Unified Pipeline (RECOMMENDED)
+```bash
+# Complete pipeline in single run - Maximum GPU efficiency
+python main.py --config configs/unified_config.yaml --mode full_pipeline
 
-## Directory Structure
+# Individual phases for debugging
+python main.py --config configs/unified_config.yaml --mode pretrain --model_type sdm
+```
+
+#### 2. Traditional Phase-by-Phase Training
+```bash
+# Pre-training
+python train.py --config configs/unified_config.yaml --phase pretrain --model baseline
+python train.py --config configs/unified_config.yaml --phase pretrain --model sdm
+
+# Fine-tuning
+python train.py --config configs/unified_config.yaml --phase finetune --task sst2
+
+# Validation
+python train.py --config configs/unified_config.yaml --phase validate
+```
+
+## 📁 Project Structure
 
 ```
-hardware-data-parameter-codesign/
-├── README.md                 # Project overview and setup guide
-├── requirements.txt          # Python dependencies
-│
-├── configs/                  # Experiment configurations
-│   ├── pretrain_base.yaml    # M_base and M_SDM hyperparameters
-│   └── finetune_glue.yaml    # SGH-PEFT hyperparameters
-│
-├── data/                     # Data loading and processing
-│   ├── wiktext103.py         # WikiText-103 dataloader
-│   └── glue.py               # GLUE benchmark dataloader
-│
-├── models/                   # Model architectures
-│   ├── __init__.py
-│   └── baseline_ssm.py       # Baseline SSM implementation (M_base)
-│
-├── scripts/                  # Analysis and evaluation scripts
-│   ├── run_csp_analysis.py   # CSP offline analysis
-│   ├── evaluate_latency.py   # Latency measurement
-│   └── run_finetuning.py     # Fine-tuning with SGH-PEFT
-│
-├── utils/                    # Utility functions
-│   ├── logger.py             # Logging utilities
-│   └── profiling.py          # Performance profiling
-│
-└── pretrain.py               # Main pre-training script
+YunMin-mamba-v1/
+├── main.py                    # 🎯 Unified pipeline (GPU-optimized)
+├── train.py                   # 🔧 Traditional training interface
+├── configs/
+│   ├── unified_config.yaml    # 📋 Central configuration
+│   └── legacy/                # 📚 Legacy configurations
+├── models/                    # 🤖 Model implementations
+├── data/                      # 📊 Dataset handling
+├── scripts/                   # 🛠️ Analysis & utilities
+│   ├── legacy/                # 📚 Legacy pipeline scripts
+│   ├── run_validation_suite.py
+│   ├── analyze_results.py
+│   └── ...
+├── evaluation/                # 📈 Advanced evaluation
+├── theory/                    # 🧮 Theoretical analysis
+└── utils/                     # 🔧 Utilities
+```
+
+## ⚙️ Configuration
+
+All hyperparameters are centralized in `configs/unified_config.yaml`:
+
+```yaml
+# Model Configuration
+model:
+  d_model: 768
+  n_layer: 12
+  vocab_size: 50257
+
+# Training Configuration  
+training:
+  pretrain:
+    learning_rate: 2e-4
+    max_steps: 20000
+  finetune:
+    learning_rate: 1e-4
+    epochs:
+      sst2: 5
+      mnli: 10
+
+# System Configuration
+system:
+  device: "cuda"  # or "cpu"
+  seed: 42
+```
+
+## 🎯 Key Features
+
+### GPU Time Optimization
+- **Unified Pipeline**: Complete training in single run
+- **Memory Persistence**: Models stay in GPU memory between phases
+- **Warm Start**: SDM initialized from baseline
+- **Automatic Checkpointing**: Optimal checkpoint management
+
+### Centralized Configuration
+- **Single Source**: All hyperparameters in one file
+- **Consistency**: Prevents configuration mismatches
+- **Easy Experiments**: Modify once, use everywhere
+
+### Streamlined Structure
+- **Main Scripts**: `main.py` (unified) and `train.py` (traditional)
+- **Legacy Support**: Old scripts preserved in `legacy/` folders
+- **Clean Organization**: Focused on essential components
+
+## 📊 Model Variants
+
+The framework supports 7 ablation groups:
+- **M_base**: Baseline Mamba
+- **M_csp**: CSP only
+- **M_sdm**: SDM only
+- **M_sgh**: SGH-PEFT only
+- **M_sdm+sgh**: SDM + SGH-PEFT
+- **M_full**: Complete framework
+- **M_challenge**: Challenge/comparison model
+
+## 🔬 Advanced Analysis
+
+### Theoretical Analysis (Enhancement #4)
+```python
+# Available in main.py with --advanced_analysis flag
+- SDM Convergence Analysis
+- CSP Spectral Analysis  
+- Multi-objective Optimization Assessment
+```
+
+### Comprehensive Evaluation (Enhancement #5)
+```python
+# Integrated evaluation suite
+- Scalability Analysis
+- Sensitivity Analysis
+- Pareto Front Analysis
+- Statistical Significance Testing
 ```
 
 ## Installation

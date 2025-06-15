@@ -294,36 +294,44 @@ class UnifiedTrainingPipeline:
         return results
     
     def run_pretrain_phase(self, model_type: str, warm_start: Optional[nn.Module] = None) -> torch.nn.Module:
-        """Run pre-training phase with memory optimization."""
-        phase_name = f"{model_type}_pretrain"
-        self.state['phase'] = phase_name
-        
-        pretrain_config = self.config['training']['pretrain']
-        
-        # Create model
-        if model_type == 'baseline':
-            # BaselineSSM only needs specific parameters
-            baseline_config = {
-                'd_model': self.config['model']['d_model'],
-                'n_layer': self.config['model']['n_layer'],
-                'vocab_size': self.config['model']['vocab_size'],
-                'd_state': self.config['model']['d_state'],
-                'd_conv': self.config['model']['d_conv']
+        """
+        Run the pre-training phase for either a baseline or SDM model.
+        """
+        self.state['phase'] = f"pretrain_{model_type}"
+        self.logger.info(f"🚀 Starting pre-train phase for {model_type.upper()} model...")
+
+        # --- Model Initialization ---
+        # Construct a dictionary with only the expected arguments to prevent TypeErrors
+        model_args = {
+            'd_model': self.config['model']['d_model'],
+            'n_layer': self.config['model']['n_layer'],
+            'vocab_size': self.config['model']['vocab_size'],
+            'd_state': self.config['model']['d_state'],
+            'd_conv': self.config['model']['d_conv'],
+            'expand': self.config['model']['expand'],
+        }
+
+        if model_type == 'sdm':
+            self.logger.info("Creating SDM model for pre-training...")
+            # Add SDM-specific arguments
+            sdm_args = {
+                'gumbel_temp': self.config['sdm']['gumbel_temp_start']
             }
-            model = BaselineSSM(**baseline_config)
-        elif model_type == 'sdm':
-            model = SDM_SSM(**self.config['model'], **self.config['sdm'])
-            
-            # Warm start from baseline if provided
-            if warm_start is not None:
-                self.logger.info("🔥 Warm starting SDM from baseline...")
-                self.initialize_sdm_from_baseline(model, warm_start)
-        else:
-            raise ValueError(f"Unknown model type: {model_type}")
+            model = SDM_SSM(**model_args, **sdm_args)
+        else:  # baseline
+            self.logger.info("Creating baseline model for pre-training...")
+            model = BaselineSSM(**model_args)
+
+        model.to(self.device)
+        self.logger.info(f"{model_type.upper()} model created with {sum(p.numel() for p in model.parameters()):,} parameters.")
         
-        model = model.to(self.device)
+        # Warm-start SDM model from baseline if provided
+        if model_type == 'sdm' and warm_start is not None:
+            self.logger.info("🔥 Warm starting SDM from baseline...")
+            self.initialize_sdm_from_baseline(model, warm_start)
         
         # Setup optimizer
+        pretrain_config = self.config['training']['pretrain']
         optimizer = torch.optim.AdamW(
             model.parameters(),
             lr=pretrain_config['learning_rate'],
@@ -447,15 +455,15 @@ class UnifiedTrainingPipeline:
                     # Log validation to W&B
                     if self.config['logging']['use_wandb']:
                         wandb.log({
-                            f"{phase_name}/val_loss": val_loss,
-                            f"{phase_name}/val_perplexity": val_ppl,
+                            f"{self.state['phase']}/val_loss": val_loss,
+                            f"{self.state['phase']}/val_perplexity": val_ppl,
                             "step": step
                         })
                 
                 # Checkpointing
                 if step % pretrain_config['save_interval'] == 0:
-                    checkpoint_path = self.save_checkpoint(model, optimizer, step, phase_name)
-                    self.state['checkpoints'][f"{phase_name}_step_{step}"] = checkpoint_path
+                    checkpoint_path = self.save_checkpoint(model, optimizer, step, self.state['phase'])
+                    self.state['checkpoints'][f"{self.state['phase']}_step_{step}"] = checkpoint_path
                 
                 # Early stopping check
                 if step >= max_steps:
@@ -481,11 +489,11 @@ class UnifiedTrainingPipeline:
                 break
         
         # Save final checkpoint
-        final_checkpoint = self.save_checkpoint(model, optimizer, step, f"{phase_name}_final")
-        self.state['checkpoints'][f"{phase_name}_final"] = final_checkpoint
+        final_checkpoint = self.save_checkpoint(model, optimizer, step, self.state['phase'])
+        self.state['checkpoints'][f"{self.state['phase']}_final"] = final_checkpoint
         
         # Store phase metrics
-        self.state['metrics'][phase_name] = {
+        self.state['metrics'][self.state['phase']] = {
             'final_loss': best_loss,
             'total_steps': step,
             'checkpoint_path': final_checkpoint,

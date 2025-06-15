@@ -361,26 +361,26 @@ class SelectiveSSM(nn.Module):
             X: Input terms of shape (B, L, D, N)
             
         Returns:
-            h: Hidden states of shape (B, L, D, N)
+            Output tensor of shape (B, L, D, N)
         """
-        B, L, D, N = A.shape
+        # Avoid in-place modification by building a list of tensors
+        h_list = []
         
-        # Convert to associative scan format
-        # Each element is (A_i, X_i) representing h_i = A_i * h_{i-1} + X_i
+        # Initial state
+        h_t = X[:, 0]
+        h_list.append(h_t)
         
-        # For the associative scan, we need:
-        # - A values stay the same
-        # - X values are the inputs
-        
-        # Initialize output
-        h = torch.zeros_like(X)
-        
-        # Simple sequential implementation (can be optimized to parallel)
-        h[:, 0] = X[:, 0]  # h_0 = X_0 (no previous state)
-        
-        for t in range(1, L):
-            h[:, t] = A[:, t] * h[:, t-1] + X[:, t]
-        
+        # Iteratively compute the scan
+        for t in range(1, X.shape[1]):
+            # Get the previous hidden state
+            h_prev = h_list[-1]
+            # Calculate new hidden state without in-place operation
+            h_t = A[:, t] * h_prev + X[:, t]
+            h_list.append(h_t)
+            
+        # Stack the list of tensors to form the final output
+        h = torch.stack(h_list, dim=1)
+            
         return h
 
 

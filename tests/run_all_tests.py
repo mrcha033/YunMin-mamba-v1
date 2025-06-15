@@ -22,7 +22,7 @@ sys.path.insert(0, str(project_root))
 
 def run_command(cmd, description, timeout=300):
     """Run a command and return success status."""
-    print(f"🧪 {description}")
+    print(f"Testing: {description}")
     print(f"   Command: {' '.join(cmd) if isinstance(cmd, list) else cmd}")
     
     start_time = time.time()
@@ -43,14 +43,14 @@ def run_command(cmd, description, timeout=300):
         duration = end_time - start_time
         
         if result.returncode == 0:
-            print(f"   ✅ SUCCESS ({duration:.2f}s)")
+            print(f"   SUCCESS ({duration:.2f}s)")
             if result.stdout.strip():
                 print("   Output (last 5 lines):")
                 for line in result.stdout.strip().split('\n')[-5:]:
                     print(f"     {line}")
             return True, duration, result.stdout, result.stderr
         else:
-            print(f"   ❌ FAILED ({duration:.2f}s)")
+            print(f"   FAILED ({duration:.2f}s)")
             print(f"   Return code: {result.returncode}")
             if result.stderr.strip():
                 print("   Error output:")
@@ -59,16 +59,16 @@ def run_command(cmd, description, timeout=300):
             return False, duration, result.stdout, result.stderr
             
     except subprocess.TimeoutExpired:
-        print(f"   ⏰ TIMEOUT ({timeout}s)")
+        print(f"   TIMEOUT ({timeout}s)")
         return False, timeout, "", "Process timed out"
     except Exception as e:
-        print(f"   💥 ERROR: {e}")
+        print(f"   ERROR: {e}")
         return False, 0, "", str(e)
 
 
 def main():
     """Run all tests."""
-    print("🚀 Hardware-Data-Parameter Co-Design Framework - Test Suite")
+    print("Hardware-Data-Parameter Co-Design Framework - Test Suite")
     print("=" * 70)
     print(f"Project Root: {project_root}")
     print(f"Python: {sys.executable}")
@@ -90,7 +90,7 @@ def main():
         },
         {
             "name": "Full Experiment Validation", 
-            "cmd": "chmod +x tests/test_full_experiment.sh && tests/test_full_experiment.sh",
+            "cmd": ["powershell", "-ExecutionPolicy", "Bypass", "-File", "tests/test_full_experiment.ps1"] if os.name == 'nt' else "tests/test_full_experiment.sh",
             "description": "Validating run_full_experiment.sh compatibility",
             "timeout": 120
         }
@@ -130,7 +130,7 @@ def main():
     total = len(results)
     
     for result in results:
-        status = "✅ PASS" if result["success"] else "❌ FAIL"
+        status = "PASS" if result["success"] else "FAIL"
         print(f"{status} {result['name']} ({result['duration']:.2f}s)")
     
     print(f"\nResults: {passed}/{total} tests passed")
@@ -144,7 +144,7 @@ def main():
         print('-' * 50)
         
         for test in failed_tests:
-            print(f"\n❌ {test['name']}:")
+            print(f"\nFAILED: {test['name']}:")
             if test["stderr"]:
                 print("   Error details:")
                 for line in test["stderr"].split('\n')[-5:]:
@@ -157,7 +157,7 @@ def main():
     print('-' * 50)
     
     if passed == total:
-        print("🎉 All tests passed! Your system is ready for experiments.")
+        print("All tests passed! Your system is ready for experiments.")
         print("")
         print("Next steps:")
         print("  1. Run a small test experiment:")
@@ -167,7 +167,7 @@ def main():
         print("     tail -f experiments/test_run/logs/experiment.log")
         
     else:
-        print("💥 Some tests failed. Please address the issues above.")
+        print("Some tests failed. Please address the issues above.")
         print("")
         print("Common solutions:")
         print("  - Install missing dependencies: pip install -r requirements.txt")

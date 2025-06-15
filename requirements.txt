@@ -17,7 +17,6 @@ huggingface-hub>=0.15.0
 
 # Scientific Computing
 numpy>=1.24.0
-# Add python-tsp for CSP optimization
 python-tsp>=0.3.0
 scikit-learn>=1.3.0
 scipy>=1.10.0

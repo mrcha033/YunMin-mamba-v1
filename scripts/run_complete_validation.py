@@ -365,16 +365,36 @@ class CompleteValidationOrchestrator:
             return str(output_path)
     
     def apply_challenge_baseline(self, base_model_path: str, output_dir: Path) -> str:
-        """Apply magnitude pruning + uniform LoRA."""
+        """Apply magnitude pruning and uniform LoRA using helper script."""
         print("Applying challenge baseline (magnitude pruning + uniform LoRA)...")
-        
-        # For now, create a placeholder model
-        # In practice, this would implement magnitude-based pruning + uniform LoRA
+
         import shutil
+
         output_path = output_dir / "model_challenge.pt"
-        shutil.copy2(base_model_path, output_path)
-        
-        print(f"✓ Challenge baseline model created")
+
+        # Optional SDM checkpoint for sparsity ratio
+        sdm_path = self.models_dir / "M_SDM" / "model_sdm.pt"
+
+        try:
+            cmd = [
+                sys.executable, "scripts/create_challenge_baseline.py",
+                "--base_model", base_model_path,
+                "--output_path", str(output_path),
+            ]
+            if sdm_path.exists():
+                cmd.extend(["--sdm_checkpoint", str(sdm_path)])
+
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=".")
+            if result.returncode == 0:
+                print("✓ Challenge baseline model created")
+            else:
+                print(f"⚠ Challenge baseline generation failed: {result.stderr}")
+                raise RuntimeError("challenge baseline script failed")
+
+        except Exception as e:
+            print(f"⚠ Challenge baseline generation error: {e}")
+            shutil.copy2(base_model_path, output_path)
+
         return str(output_path)
     
     def run_full_pipeline(self, base_model_path: str, output_dir: Path) -> str:

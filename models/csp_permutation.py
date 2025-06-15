@@ -109,10 +109,10 @@ class CorrelationAnalyzer:
         try:
             # The model's forward pass must be adjusted to return hidden states
             # when a specific argument is passed.
-            # We expect the model to return a tuple where one element is the
+            # We expect the model to return a tuple where the last element is the
             # sequence of hidden states 'h' from the last layer.
-            # The goal is to get a correlation matrix for the inner dimension D (d_inner).
-            _, hidden_states = model(input_ids, return_last_hidden_states=True)
+            # The SDM_SSM model returns (logits, all_masks, hidden_states). We need the third element.
+            *_, hidden_states = model(input_ids, return_last_hidden_states=True)
             
             # Expected hidden_states shape from baseline_ssm: (L, B, D, N)
             # L=seq_len, B=batch, D=d_inner, N=d_state

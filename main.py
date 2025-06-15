@@ -1125,12 +1125,43 @@ class UnifiedTrainingPipeline:
         self.logger.info(f"  📋 {summary_path}")
 
     def apply_dry_run_settings(self):
-        """Modify config for a quick dry run."""
-        self.config['training']['pretrain']['max_steps'] = 10
-        self.config['training']['pretrain']['eval_interval'] = 5
-        self.config['training']['finetune']['max_epochs'] = 1
-        self.config['validation']['ppl_max_batches'] = 2
-        self.logger.info("Applied dry run settings.")
+        """Override config for a fast, low-resource dry run."""
+        self.logger.info("Applying dry run settings to config...")
+
+        # Safely get or create nested dictionaries
+        def safe_set(cfg, keys, value):
+            for key in keys[:-1]:
+                cfg = cfg.setdefault(key, {})
+            cfg[keys[-1]] = value
+
+        # Reduce model size
+        safe_set(self.config, ['model', 'd_model'], 32)
+        safe_set(self.config, ['model', 'n_layer'], 2)
+        safe_set(self.config, ['model', 'd_state'], 8)
+        safe_set(self.config, ['model', 'd_conv'], 2)
+
+        # Reduce training duration
+        safe_set(self.config, ['training', 'pretrain', 'max_epochs'], 1)
+        safe_set(self.config, ['training', 'pretrain', 'max_steps'], 5)
+        safe_set(self.config, ['training', 'pretrain', 'warmup_steps'], 1)
+        safe_set(self.config, ['training', 'pretrain', 'eval_interval'], 5)
+
+        # Reduce batch size and sequence length
+        safe_set(self.config, ['training', 'pretrain', 'micro_batch_size'], 2)
+        safe_set(self.config, ['data', 'max_length'], 64)
+
+        # Reduce validation/evaluation batches (now using safe_set)
+        # This key might not exist, so we create it.
+        safe_set(self.config, ['validation', 'max_eval_batches'], 2)
+        safe_set(self.config, ['finetuning', 'max_eval_batches'], 2)
+        
+        # Reduce CSP analysis samples
+        safe_set(self.config, ['csp', 'analysis_samples'], 100)
+
+        # Disable external logging for dry runs
+        safe_set(self.config, ['logging', 'use_wandb'], False)
+        
+        self.logger.info("Dry run settings applied.")
 
     def run_csp_phase(self, model_to_optimize: nn.Module) -> Tuple[nn.Module, Dict[str, Any]]:
         """Run the CSP optimization phase."""

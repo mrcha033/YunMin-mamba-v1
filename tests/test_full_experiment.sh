@@ -124,7 +124,7 @@ try:
     print(f'Config sections: {list(config.keys())}')
     
     # Check required sections
-    required_sections = ['model', 'training', 'data', 'sdm', 'logging']
+    required_sections = ['model', 'training', 'sdm', 'logging']
     missing_sections = []
     
     for section in required_sections:

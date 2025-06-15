@@ -22,6 +22,14 @@ from data.wikitext103 import get_wikitext103_dataloader
 from utils.logger import setup_logger, setup_wandb, log_model_info, log_training_info
 from utils.profiling import count_parameters
 
+# Import theoretical analysis for convergence tracking (Enhancement #4)
+try:
+    from theory.convergence_analysis import SDMConvergenceAnalyzer
+    CONVERGENCE_TRACKING_AVAILABLE = True
+except ImportError:
+    print("Warning: Convergence tracking not available. Install theory module for enhanced analysis.")
+    CONVERGENCE_TRACKING_AVAILABLE = False
+
 
 def calculate_sparsity_loss(model: nn.Module) -> torch.Tensor:
     """
@@ -358,6 +366,14 @@ def main():
     # SDM hyperparameters
     lambda_sparsity = config['sdm'].get('lambda_sparsity', 0.01)
     
+    # Initialize convergence tracking (Enhancement #4)
+    convergence_analyzer = None
+    z_logits_history = []
+    temperature_history = []
+    if CONVERGENCE_TRACKING_AVAILABLE and accelerator.is_main_process:
+        convergence_analyzer = SDMConvergenceAnalyzer()
+        logger.info("🧮 Convergence tracking enabled for theoretical analysis")
+    
     logger.info("Starting SDM pre-training...")
     logger.info(f"Sparsity regularization weight (λ): {lambda_sparsity}")
     
@@ -433,7 +449,7 @@ def main():
                     running_task_loss = 0.0
                     running_sparsity_loss = 0.0
                 
-                # Sparsity logging
+                # Sparsity logging and convergence tracking
                 if global_step % (config['logging']['log_interval'] * 5) == 0:
                     if accelerator.is_main_process:
                         log_sparsity_metrics(
@@ -442,6 +458,53 @@ def main():
                             global_step,
                             config['logging'].get('wandb_project') is not None
                         )
+                        
+                        # Convergence tracking (Enhancement #4)
+                        if convergence_analyzer is not None:
+                            unwrapped_model = accelerator.unwrap_model(model)
+                            
+                            # Collect z_logits from all layers
+                            current_z_logits = []
+                            for layer in unwrapped_model.layers:
+                                if hasattr(layer, 'z_logits'):
+                                    current_z_logits.append(layer.z_logits.detach().cpu().clone())
+                            
+                            if current_z_logits:
+                                z_logits_history.append(current_z_logits)
+                                temperature_history.append(current_temp)
+                                
+                                # Analyze convergence every few checkpoints
+                                if len(z_logits_history) > 5 and global_step % (config['logging']['log_interval'] * 20) == 0:
+                                    try:
+                                        # Flatten history for analysis
+                                        flat_z_history = []
+                                        flat_temp_history = []
+                                        
+                                        for step_logits, temp in zip(z_logits_history[-10:], temperature_history[-10:]):
+                                            for layer_logits in step_logits:
+                                                flat_z_history.append(layer_logits)
+                                                flat_temp_history.append(temp)
+                                        
+                                        if flat_z_history:
+                                            convergence_results = convergence_analyzer.analyze_gumbel_sigmoid_convergence(
+                                                flat_z_history, flat_temp_history
+                                            )
+                                            
+                                            logger.info(f"📊 Convergence Analysis (Step {global_step}):")
+                                            logger.info(f"  Convergence rate: {convergence_results.get('convergence_rate', 0):.6f}")
+                                            logger.info(f"  Final sparsity: {convergence_results.get('final_sparsity', 0):.4f}")
+                                            logger.info(f"  Convergence achieved: {convergence_results.get('convergence_achieved', False)}")
+                                            
+                                            if config['logging'].get('wandb_project'):
+                                                wandb.log({
+                                                    "convergence/rate": convergence_results.get('convergence_rate', 0),
+                                                    "convergence/final_sparsity": convergence_results.get('final_sparsity', 0),
+                                                    "convergence/achieved": convergence_results.get('convergence_achieved', False),
+                                                    "train/step": global_step
+                                                })
+                                                
+                                    except Exception as e:
+                                        logger.warning(f"Convergence analysis failed: {e}")
                 
                 # Evaluation
                 if global_step % config['logging']['eval_interval'] == 0:

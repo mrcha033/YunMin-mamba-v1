@@ -3,6 +3,14 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from typing import Optional, Dict, Any, Tuple
+
+# CSP integration
+try:
+    from .csp_permutation import run_csp_optimization, CSPConfig
+    CSP_AVAILABLE = True
+except ImportError:
+    CSP_AVAILABLE = False
 
 class MambaBlock(nn.Module):
     """
@@ -61,11 +69,12 @@ class MambaBlock(nn.Module):
         # --- Output Projection ---
         self.out_proj = nn.Linear(self.d_inner, self.d_model, bias=False)
 
-    def forward(self, x: torch.Tensor):
+    def forward(self, x: torch.Tensor, return_hidden_states: bool = False):
         """
         Forward pass for the MambaBlock.
         Args:
             x (torch.Tensor): Input tensor of shape (B, L, D_model).
+            return_hidden_states (bool): If True, returns the sequence of hidden states.
         """
         B, L, _ = x.shape
         
@@ -80,32 +89,114 @@ class MambaBlock(nn.Module):
         
         # 3. Activation and SSM scan
         x = F.silu(x)
-        y = self.ssm_scan(x)
+        y, h_seq = self.ssm_scan(x) # h_seq will be returned
 
         # 4. Gating and output projection
         y = y * F.silu(z)
         output = self.out_proj(y)
-
+        
+        if return_hidden_states:
+            return output, h_seq
         return output
 
     def ssm_scan(self, x: torch.Tensor):
         """
         Performs the selective SSM scan. This is the computational core.
+        
         [Pillar 1: CSP] The performance of this function is memory-bound. The core operation
                        involves sequentially updating the hidden state 'h_t' of size (B, d_inner, d_state).
                        The arbitrary memory layout of the 'd_state' dimension leads to poor cache
                        locality and high wall-clock latency. CSP directly addresses this by
                        reordering the 'd_state' dimension to maximize physical cache hits.
-                       A high-performance implementation requires a custom CUDA kernel, but the
-                       permutation logic can be applied to a PyTorch-based scan as well.
+        
+        Args:
+            x: Input tensor of shape (B, L, d_inner)
+            
+        Returns:
+            Output tensor of shape (B, L, d_inner)
         """
-        # A placeholder for the complex selective scan logic.
-        # The actual implementation involves discretization of (A, B) and a parallel scan.
-        # We will use an established implementation (e.g., from the 'mamba-ssm' package) here.
-        # The key is that this function operates on a hidden state 'h' of dimension 'd_state',
-        # which is the target of CSP's permutation.
-        y = torch.randn_like(x) # Placeholder for actual scan output
-        return y
+        B, L, D = x.shape
+        
+        # Generate input-dependent SSM parameters
+        x_dbl = self.x_proj(x)  # (B, L, 2*d_state)
+        
+        # Split into B and C projections
+        B_proj, C_proj = torch.split(x_dbl, [self.d_state, self.d_state], dim=-1)
+        
+        # Process dt (discretization parameter) - simplified for baseline
+        # In full Mamba, this would use a separate dt projection
+        dt = torch.ones(B, L, self.d_inner, device=x.device, dtype=x.dtype) * 0.1
+        
+        # Get A matrix (convert from log space)
+        A = -torch.exp(self.A_log.float())  # (d_inner, d_state)
+        
+        # Perform selective scan
+        y, h_seq = self.selective_scan_sequential(x, dt, A, B_proj, C_proj)
+        
+        # Apply skip connection
+        y = y + x * self.D.unsqueeze(0).unsqueeze(0)
+        
+        return y, h_seq
+    
+    def selective_scan_sequential(
+        self, 
+        x: torch.Tensor, 
+        dt: torch.Tensor, 
+        A: torch.Tensor, 
+        B: torch.Tensor, 
+        C: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Sequential selective scan implementation.
+        
+        This implements the core SSM recurrence:
+        h_t = exp(dt * A) * h_{t-1} + dt * B * x_t
+        y_t = C * h_t
+        
+        Args:
+            x: Input tensor (B, L, d_inner)
+            dt: Discretization parameter (B, L, d_inner)
+            A: Transition matrix (d_inner, d_state)
+            B: Input projection (B, L, d_state)
+            C: Output projection (B, L, d_state)
+            
+        Returns:
+            Tuple of:
+            - Output tensor (B, L, d_inner)
+            - Hidden states sequence (L, B, d_inner, d_state)
+        """
+        B_batch, L, D = x.shape
+        N = A.shape[-1]
+        
+        # Initialize hidden state
+        h = torch.zeros(B_batch, D, N, device=x.device, dtype=x.dtype)
+        
+        # Output buffer
+        ys = []
+        hs = [] # Buffer for hidden states
+        
+        for t in range(L):
+            # Get parameters for this timestep
+            dt_t = dt[:, t, :]  # (B, D)
+            B_t = B[:, t, :]    # (B, N)
+            C_t = C[:, t, :]    # (B, N)
+            x_t = x[:, t, :]    # (B, D)
+            
+            # Discretize A and B
+            dA = torch.exp(dt_t.unsqueeze(-1) * A.unsqueeze(0))  # (B, D, N)
+            dB = dt_t.unsqueeze(-1) * B_t.unsqueeze(1)  # (B, D, N)
+            
+            # State update: h = A * h + B * x
+            h = dA * h + dB * x_t.unsqueeze(-1)  # (B, D, N)
+            hs.append(h)
+            
+            # Output: y = C * h
+            y_t = torch.einsum('bdn,bn->bd', h, C_t)  # (B, D)
+            ys.append(y_t)
+        
+        y = torch.stack(ys, dim=1)  # (B, L, D)
+        h_sequence = torch.stack(hs, dim=0) # (L, B, D, N)
+        return y, h_sequence
 
 
 class BaselineSSM(nn.Module):
@@ -129,13 +220,55 @@ class BaselineSSM(nn.Module):
         self.norm = nn.LayerNorm(d_model)
         self.lm_head = nn.Linear(d_model, vocab_size, bias=False)
 
-    def forward(self, input_ids: torch.Tensor):
+    def forward(self, input_ids: torch.Tensor, return_last_hidden_states: bool = False):
+        """
+        Args:
+            input_ids (torch.Tensor): The input token IDs. Shape: (B, L)
+            return_last_hidden_states (bool): If True, returns the hidden states 'h'
+                                              from the final MambaBlock for CSP analysis.
+        """
         x = self.embedding(input_ids)
         
-        for layer in self.layers:
-            x = x + layer(x) # Residual connection
+        last_hidden_states = None
+
+        for i, layer in enumerate(self.layers):
+            is_last_layer = i == len(self.layers) - 1
+            if return_last_hidden_states and is_last_layer:
+                y, last_hidden_states = layer(x, return_hidden_states=True)
+                x = x + y # Main residual connection
+            else:
+                y = layer(x)
+                x = x + y # Main residual connection
             
         x = self.norm(x)
         logits = self.lm_head(x)
         
-        return logits 
+        if return_last_hidden_states:
+            # Note: The returned hidden states are from BEFORE the final layer norm.
+            return logits, last_hidden_states
+
+        return logits
+
+    def apply_csp_optimization(
+        self, 
+        dataloader: torch.utils.data.DataLoader,
+        config: Optional['CSPConfig'] = None
+    ) -> Tuple['BaselineSSM', Dict[str, Any]]:
+        """
+        Apply CSP (Correlation-based Scan Permutation) optimization.
+        
+        [Pillar 1: CSP] This optimizes the SSM state dimension ordering to
+        maximize cache locality and reduce memory access latency.
+        
+        Args:
+            dataloader: Data for correlation analysis
+            config: CSP configuration (optional)
+            
+        Returns:
+            Tuple of (optimized_model, optimization_results)
+        """
+        if not CSP_AVAILABLE:
+            raise ImportError("CSP optimization requires the csp_permutation module")
+        
+        device = next(self.parameters()).device
+        return run_csp_optimization(self, dataloader, config, device) 

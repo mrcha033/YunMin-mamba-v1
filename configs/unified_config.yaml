@@ -49,12 +49,13 @@ sdm:
 
 # SGH-PEFT Configuration
 sgh_peft:
-  lora_high_rank: 16              # High-rank adaptation
-  lora_low_rank: 4                # Low-rank adaptation
+  lora_rank: 16                   # Unified rank for LoRA adapters
   lora_alpha_factor: 2            # Alpha scaling factor
   lora_dropout: 0.05              # Dropout for LoRA
-  apply_sparsity_mask: true       # Apply sparsity mask
-  freeze_base_model: true         # Freeze base parameters
+  ia3_init_std: 0.02              # IA³ initialization std dev
+  peft_threshold_percentile: 75.0 # Layers above this percentile get LoRA, others get IA³
+  apply_sparsity_mask: true       # Apply sparsity mask during fine-tuning
+  freeze_base_model: true         # Freeze base parameters during fine-tuning
 
 # System Configuration
 system:

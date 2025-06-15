@@ -164,8 +164,8 @@ model:
   d_conv: 4             # Convolution kernel size
 
 training:
-  batch_size: 32        # Training batch size
-  learning_rate: 1e-4   # Learning rate
+  batch_size: 128       # Training batch size
+  learning_rate: 2e-4   # Learning rate
   max_steps: 100000     # Maximum training steps
 ```
 

@@ -9,11 +9,11 @@ model:
 
 training:
   pretrain:
-    batch_size: 32
+    batch_size: 128
     micro_batch_size: 8
-    learning_rate: 1e-4
+    learning_rate: 2e-4
     weight_decay: 0.1
-    warmup_steps: 1000
+    warmup_steps_ratio: 0.1
     max_epochs: 20
     max_grad_norm: 1.0
 

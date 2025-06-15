@@ -44,8 +44,9 @@ class ValidationSuite:
     Supports evaluation of all model variants:
     - M_base: Original baseline model
     - M_CSP: M_base + CSP permutation (Pillar 1)
-    - M_SDM: M_base + SDM sparsity (Pillar 2)  
+    - M_SDM: M_base + SDM sparsity (Pillar 2)
     - M_SGH: M_base + SGH-PEFT with proxy importance
+    - M_sdm_sgh: SDM pretraining followed by SGH-PEFT
     - M_challenge: M_base + magnitude pruning + uniform LoRA
     - M_full: M_base + CSP + SDM + SGH-PEFT (all pillars)
     """
@@ -89,7 +90,7 @@ class ValidationSuite:
         elif group_name in ['M_SDM', 'M_SGH']:
             # SDM-based models
             model = SDM_SSM(**model_config, gumbel_temp=1.0)
-        elif group_name == 'M_full':
+        elif group_name in ['M_full', 'M_sdm_sgh']:
             # Full pipeline model (SDM + SGH-PEFT)
             base_model = SDM_SSM(**model_config, gumbel_temp=1.0)
             # Load base SDM checkpoint first
@@ -337,7 +338,7 @@ class ValidationSuite:
             "total_time_sec": total_time
         }
     
-    def validate_finetune_efficiency(self, model_group: str, base_checkpoint: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    def validate_finetune_efficiency(self, model_group: str, base_checkpoint: str, config: Dict[str, Any], sdm_checkpoint: Optional[str] = None) -> Dict[str, Any]:
         """
         Validate fine-tuning efficiency: trainable parameters and GLUE performance.
         
@@ -360,7 +361,7 @@ class ValidationSuite:
             base_model = self.load_model_for_group(model_group, base_checkpoint, config)
             
             # Create fine-tuned model based on group
-            if model_group == 'M_full':
+            if model_group in ['M_full', 'M_sdm_sgh']:
                 # Already has SGH-PEFT applied
                 finetuned_model = base_model
             elif model_group == 'M_SGH':
@@ -368,7 +369,7 @@ class ValidationSuite:
                 finetuned_model = self.create_sgh_peft_with_proxy(base_model)
             elif model_group == 'M_challenge':
                 # Apply magnitude pruning + uniform LoRA
-                finetuned_model = self.create_magnitude_pruned_lora(base_model)
+                finetuned_model = self.create_magnitude_pruned_lora(base_model, sdm_checkpoint)
             else:
                 # Standard LoRA for other models
                 finetuned_model = self.create_standard_lora(base_model)
@@ -380,6 +381,8 @@ class ValidationSuite:
             results["total_parameters"] = total_params
             results["trainable_parameters"] = trainable_params
             results["trainable_ratio"] = trainable_params / total_params
+            if model_group == 'M_challenge':
+                results["pruning_sparsity"] = getattr(self, "last_pruning_sparsity", 0.0)
             
             # Run GLUE evaluation (simplified for SST-2)
             glue_score = self.evaluate_glue_task(finetuned_model, task="sst2")
@@ -405,10 +408,61 @@ class ValidationSuite:
         # For now, return the base model (placeholder)
         return base_model
     
-    def create_magnitude_pruned_lora(self, base_model: nn.Module) -> nn.Module:
+    def create_magnitude_pruned_lora(self, base_model: nn.Module, sdm_checkpoint: Optional[str]) -> nn.Module:
         """Create magnitude-pruned model with uniform LoRA."""
-        # This would implement magnitude pruning + uniform LoRA
-        # For now, return the base model (placeholder)
+
+        sparsity_ratio = 0.0
+        if sdm_checkpoint and os.path.isfile(sdm_checkpoint):
+            checkpoint = torch.load(sdm_checkpoint, map_location="cpu")
+            state_dict = checkpoint.get("model_state_dict", checkpoint)
+            z_keys = [k for k in state_dict.keys() if k.endswith("z_logits")]
+            total = 0
+            kept = 0
+            for k in z_keys:
+                z = state_dict[k]
+                total += z.numel()
+                kept += (z > 0).float().sum().item()
+            if total > 0:
+                sparsity_ratio = 1.0 - kept / total
+                print(f"✓ SDM sparsity ratio detected: {sparsity_ratio:.2%}")
+        else:
+            print("Warning: SDM checkpoint not found, skipping sparsity estimation")
+
+        self.last_pruning_sparsity = sparsity_ratio
+
+        if sparsity_ratio > 0:
+            channel_scores = []
+            for layer in base_model.layers:
+                weight = layer.in_proj.weight.data[:layer.d_inner]
+                channel_scores.append(weight.abs().mean(dim=1))
+            flat = torch.cat(channel_scores)
+            k = int(len(flat) * sparsity_ratio)
+            threshold = flat.kthvalue(k).values.item() if k > 0 else -float("inf")
+            idx = 0
+            for layer in base_model.layers:
+                n = layer.d_inner
+                scores = flat[idx:idx+n]
+                idx += n
+                mask = (scores > threshold).float()
+                layer.in_proj.weight.data[:n] *= mask.view(-1, 1)
+                layer.in_proj.weight.data[n:] *= mask.view(-1, 1)
+                layer.out_proj.weight.data *= mask.view(1, -1)
+                layer.conv1d.weight.data *= mask.view(-1, 1, 1)
+
+        from models.sgh_peft import MaskedLoRALayer
+        rank = 4
+        for layer in base_model.layers:
+            layer.in_proj = MaskedLoRALayer(layer.in_proj, rank=rank, alpha=rank*2, dropout=0.05)
+            layer.out_proj = MaskedLoRALayer(layer.out_proj, rank=rank, alpha=rank*2, dropout=0.05)
+            for param in [
+                layer.conv1d.weight,
+                layer.x_proj.weight,
+                layer.dt_proj.weight,
+                layer.A_log,
+                layer.D
+            ]:
+                param.requires_grad = False
+
         return base_model
     
     def create_standard_lora(self, base_model: nn.Module) -> nn.Module:
@@ -449,7 +503,7 @@ class ValidationSuite:
             print(f"Warning: GLUE evaluation failed: {e}")
             return -1.0
     
-    def run_comprehensive_validation(self, model_group: str, checkpoint_path: str, config: Dict[str, Any]) -> Dict[str, Any]:
+    def run_comprehensive_validation(self, model_group: str, checkpoint_path: str, config: Dict[str, Any], sdm_checkpoint: Optional[str] = None) -> Dict[str, Any]:
         """
         Run comprehensive validation for all hypotheses.
         
@@ -482,7 +536,7 @@ class ValidationSuite:
         
         # H3: Fine-tuning efficiency
         print("\n[H3] Validating fine-tuning efficiency...")
-        finetune_results = self.validate_finetune_efficiency(model_group, checkpoint_path, config)
+        finetune_results = self.validate_finetune_efficiency(model_group, checkpoint_path, config, sdm_checkpoint)
         results.update(finetune_results)
         
         # Calculate efficiency ratios for comparison
@@ -512,6 +566,8 @@ class ValidationSuite:
         print(f"Trainable params:     {results.get('trainable_parameters', 'N/A'):,}")
         print(f"GLUE SST-2 accuracy:  {results.get('glue_sst2_accuracy', 'N/A'):.4f}")
         print(f"Efficiency score:     {results.get('efficiency_score', 'N/A'):.2e}")
+        if "pruning_sparsity" in results:
+            print(f"Pruning sparsity:     {results['pruning_sparsity']:.2%}")
 
 
 def parse_args():
@@ -525,6 +581,7 @@ Model Groups:
   M_CSP       - M_base + CSP permutation (Pillar 1)
   M_SDM       - M_base + SDM sparsity (Pillar 2)
   M_SGH       - M_base + SGH-PEFT with proxy importance
+  M_sdm_sgh   - SDM pretraining followed by SGH-PEFT
   M_challenge - M_base + magnitude pruning + uniform LoRA
   M_full      - M_base + CSP + SDM + SGH-PEFT (all pillars)
 
@@ -538,10 +595,12 @@ Examples:
     )
     
     parser.add_argument("--model_group", type=str, required=True,
-                       choices=['M_base', 'M_CSP', 'M_SDM', 'M_SGH', 'M_challenge', 'M_full'],
+                       choices=['M_base', 'M_CSP', 'M_SDM', 'M_SGH', 'M_sdm_sgh', 'M_challenge', 'M_full'],
                        help="Model group identifier")
     parser.add_argument("--checkpoint", type=str, required=True,
                        help="Path to the model checkpoint")
+    parser.add_argument("--sdm_checkpoint", type=str, default=None,
+                       help="Path to SDM checkpoint for pruning ratio")
     parser.add_argument("--config", type=str, default="configs/model_config.yaml",
                        help="Path to model configuration file")
     
@@ -608,7 +667,8 @@ def main():
         results = validator.run_comprehensive_validation(
             model_group=args.model_group,
             checkpoint_path=args.checkpoint,
-            config=config
+            config=config,
+            sdm_checkpoint=args.sdm_checkpoint
         )
         
         # Save results

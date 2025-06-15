@@ -51,15 +51,15 @@ def create_demo_models():
     torch.save({'model_state_dict': base_model.state_dict(), 'config': config}, base_path)
     models['M_base'] = str(base_path)
     
-    # 2. M_CSP: Base model with CSP (simulated)
-    print("Creating M_CSP...")
+    # 2. M_csp: Base model with CSP (simulated)
+    print("Creating M_csp...")
     csp_model = BaselineSSM(**config)
-    csp_path = models_dir / "M_CSP.pt"
+    csp_path = models_dir / "M_csp.pt"
     torch.save({'model_state_dict': csp_model.state_dict(), 'config': config, 'csp_applied': True}, csp_path)
-    models['M_CSP'] = str(csp_path)
+    models['M_csp'] = str(csp_path)
     
-    # 3. M_SDM: SDM model with learned sparsity
-    print("Creating M_SDM...")
+    # 3. M_sdm: SDM model with learned sparsity
+    print("Creating M_sdm...")
     sdm_model = SDM_SSM(**config, gumbel_temp=1.0)
     
     # Simulate learned sparsity patterns
@@ -75,16 +75,16 @@ def create_demo_models():
             sparse_indices = torch.randperm(num_channels)[:num_sparse]
             layer.z_logits.data[sparse_indices] = -2.0  # Some channels inactive
     
-    sdm_path = models_dir / "M_SDM.pt"
+    sdm_path = models_dir / "M_sdm.pt"
     torch.save({'model_state_dict': sdm_model.state_dict(), 'config': config, 'sdm_applied': True}, sdm_path)
-    models['M_SDM'] = str(sdm_path)
+    models['M_sdm'] = str(sdm_path)
     
-    # 4. M_SGH: SGH-PEFT with proxy importance
-    print("Creating M_SGH...")
+    # 4. M_sgh: SGH-PEFT with proxy importance
+    print("Creating M_sgh...")
     sgh_model = BaselineSSM(**config)
-    sgh_path = models_dir / "M_SGH.pt"
+    sgh_path = models_dir / "M_sgh.pt"
     torch.save({'model_state_dict': sgh_model.state_dict(), 'config': config, 'sgh_proxy': True}, sgh_path)
-    models['M_SGH'] = str(sgh_path)
+    models['M_sgh'] = str(sgh_path)
     
     # 5. M_challenge: Magnitude pruning + uniform LoRA
     print("Creating M_challenge...")
@@ -138,15 +138,15 @@ def simulate_validation_results(models):
             'multipliers': {'flops': 1.0, 'latency': 1.0, 'params': 1.0, 'accuracy': 1.0, 'perplexity': 1.0},
             'trainable_ratio': 1.0
         },
-        'M_CSP': {
+        'M_csp': {
             'multipliers': {'flops': 1.0, 'latency': 0.85, 'params': 1.0, 'accuracy': 1.01, 'perplexity': 0.98},
             'trainable_ratio': 1.0
         },
-        'M_SDM': {
+        'M_sdm': {
             'multipliers': {'flops': 0.75, 'latency': 0.90, 'params': 0.75, 'accuracy': 0.99, 'perplexity': 1.02},
             'trainable_ratio': 1.0
         },
-        'M_SGH': {
+        'M_sgh': {
             'multipliers': {'flops': 1.0, 'latency': 1.0, 'params': 1.0, 'accuracy': 1.03, 'perplexity': 1.0},
             'trainable_ratio': 0.06  # 6% trainable with SGH-PEFT
         },

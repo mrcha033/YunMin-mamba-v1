@@ -66,7 +66,7 @@ class FullScaleValidationDemo:
         }
         
         # Model variants
-        self.model_variants = ["M_base", "M_CSP", "M_SDM", "M_SGH", "M_challenge", "M_full"]
+        self.model_variants = ["M_base", "M_csp", "M_sdm", "M_sgh", "M_challenge", "M_full"]
         
         # GLUE tasks with expected performance ranges
         self.glue_tasks = {
@@ -89,9 +89,9 @@ class FullScaleValidationDemo:
         
         variant_modifiers = {
             "M_base": 1.0,
-            "M_CSP": 1.01,  # Slight improvement from hardware optimization
-            "M_SDM": 0.98,  # Slight degradation from sparsity
-            "M_SGH": 1.02,  # Improvement from parameter efficiency
+            "M_csp": 1.01,  # Slight improvement from hardware optimization
+            "M_sdm": 0.98,  # Slight degradation from sparsity
+            "M_sgh": 1.02,  # Improvement from parameter efficiency
             "M_challenge": 1.03,  # Good performance
             "M_full": 1.06   # Best performance from synergy
         }
@@ -159,9 +159,9 @@ class FullScaleValidationDemo:
         # Variant-specific improvements
         variant_improvements = {
             "M_base": {"latency": 1.0, "memory": 1.0},
-            "M_CSP": {"latency": 0.82, "memory": 1.0},    # 18% latency improvement
-            "M_SDM": {"latency": 0.95, "memory": 0.85},   # 5% latency, 15% memory improvement
-            "M_SGH": {"latency": 1.02, "memory": 0.75},   # Slight latency increase, 25% memory improvement
+            "M_csp": {"latency": 0.82, "memory": 1.0},    # 18% latency improvement
+            "M_sdm": {"latency": 0.95, "memory": 0.85},   # 5% latency, 15% memory improvement
+            "M_sgh": {"latency": 1.02, "memory": 0.75},   # Slight latency increase, 25% memory improvement
             "M_challenge": {"latency": 0.88, "memory": 0.80},
             "M_full": {"latency": 0.76, "memory": 0.70}   # Best of all optimizations
         }
@@ -246,9 +246,9 @@ class FullScaleValidationDemo:
         # Variant-specific memory efficiency
         variant_efficiency = {
             "M_base": 1.0,
-            "M_CSP": 1.0,      # No memory change
-            "M_SDM": 0.85,     # 15% memory reduction from sparsity
-            "M_SGH": 0.75,     # 25% memory reduction from PEFT
+            "M_csp": 1.0,      # No memory change
+            "M_sdm": 0.85,     # 15% memory reduction from sparsity
+            "M_sgh": 0.75,     # 25% memory reduction from PEFT
             "M_challenge": 0.80,
             "M_full": 0.70     # Best memory efficiency
         }

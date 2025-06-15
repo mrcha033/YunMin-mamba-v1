@@ -48,10 +48,10 @@ class ValidationSuite:
     
     Supports evaluation of all model variants:
     - M_base: Original baseline model
-    - M_CSP: M_base + CSP permutation (Pillar 1)
-    - M_SDM: M_base + SDM sparsity (Pillar 2)
-    - M_SGH: M_base + SGH-PEFT with proxy importance
-    - M_sdm_sgh: SDM pretraining followed by SGH-PEFT
+    - M_csp: M_base + CSP permutation (Pillar 1)
+    - M_sdm: M_base + SDM sparsity (Pillar 2)
+    - M_sgh: M_base + SGH-PEFT with proxy importance
+    - M_sdm+sgh: M_sdm fine-tuned with SGH-PEFT using learned sparsity masks
     - M_challenge: M_base + magnitude pruning + uniform LoRA
     - M_full: M_base + CSP + SDM + SGH-PEFT (all pillars)
     """
@@ -89,13 +89,13 @@ class ValidationSuite:
             'd_conv': config.get('d_conv', 4)
         }
         
-        if group_name in ['M_base', 'M_CSP', 'M_challenge']:
+        if group_name in ['M_base', 'M_csp', 'M_challenge']:
             # Base model variants
             model = BaselineSSM(**model_config)
-        elif group_name in ['M_SDM', 'M_SGH']:
+        elif group_name in ['M_sdm', 'M_sgh']:
             # SDM-based models
             model = SDM_SSM(**model_config, gumbel_temp=1.0)
-        elif group_name in ['M_full', 'M_sdm_sgh']:
+        elif group_name in ['M_full', 'M_sdm+sgh']:
             # Full pipeline model (SDM + SGH-PEFT)
             base_model = SDM_SSM(**model_config, gumbel_temp=1.0)
             # Load base SDM checkpoint first
@@ -366,10 +366,10 @@ class ValidationSuite:
             base_model = self.load_model_for_group(model_group, base_checkpoint, config)
             
             # Create fine-tuned model based on group
-            if model_group in ['M_full', 'M_sdm_sgh']:
+            if model_group in ['M_full', 'M_sdm+sgh']:
                 # Already has SGH-PEFT applied
                 finetuned_model = base_model
-            elif model_group == 'M_SGH':
+            elif model_group == 'M_sgh':
                 # Apply SGH-PEFT with proxy importance scores
                 finetuned_model = self.create_sgh_peft_with_proxy(base_model)
             elif model_group == 'M_challenge':
@@ -707,10 +707,10 @@ def parse_args():
         epilog="""
 Model Groups:
   M_base      - Original baseline Mamba model
-  M_CSP       - M_base + CSP permutation (Pillar 1)
-  M_SDM       - M_base + SDM sparsity (Pillar 2)
-  M_SGH       - M_base + SGH-PEFT with proxy importance
-  M_sdm_sgh   - SDM pretraining followed by SGH-PEFT
+  M_csp       - M_base + CSP permutation (Pillar 1)
+  M_sdm       - M_base + SDM sparsity (Pillar 2)
+  M_sgh       - M_base + SGH-PEFT with proxy importance
+  M_sdm+sgh   - M_sdm fine-tuned with SGH-PEFT using learned sparsity masks
   M_challenge - M_base + magnitude pruning + uniform LoRA
   M_full      - M_base + CSP + SDM + SGH-PEFT (all pillars)
 

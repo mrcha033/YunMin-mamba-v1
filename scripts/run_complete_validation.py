@@ -55,25 +55,25 @@ class CompleteValidationOrchestrator:
                 'generation_method': 'copy_base',
                 'dependencies': []
             },
-            'M_CSP': {
+            'M_csp': {
                 'description': 'M_base + CSP (Pillar 1)',
                 'generation_method': 'apply_csp',
                 'dependencies': ['M_base']
             },
-            'M_SDM': {
+            'M_sdm': {
                 'description': 'M_base + SDM (Pillar 2)',
                 'generation_method': 'apply_sdm',
                 'dependencies': ['M_base']
             },
-            'M_SGH': {
+            'M_sgh': {
                 'description': 'M_base + SGH-PEFT with proxy importance',
                 'generation_method': 'apply_sgh_proxy',
                 'dependencies': ['M_base']
             },
-            'M_sdm_sgh': {
-                'description': 'SDM pretraining followed by SGH-PEFT',
-                'generation_method': 'apply_sdm_then_sgh',
-                'dependencies': ['M_base']
+            'M_sdm+sgh': {
+                'description': 'M_sdm fine-tuned with SGH-PEFT using learned sparsity masks',
+                'generation_method': 'apply_sdm_plus_sgh',
+                'dependencies': ['M_sdm']
             },
             'M_challenge': {
                 'description': 'M_base + magnitude pruning + uniform LoRA',
@@ -128,8 +128,12 @@ class CompleteValidationOrchestrator:
             output_path = self.apply_sgh_peft_proxy(base_model_path, variant_dir)
 
         elif method == 'apply_sdm_then_sgh':
-            # SDM pretraining followed by SGH-PEFT
+            # SDM pretraining followed by SGH-PEFT (legacy method)
             output_path = self.apply_sdm_then_sgh(base_model_path, variant_dir)
+
+        elif method == 'apply_sdm_plus_sgh':
+            # Apply SGH-PEFT to existing M_sdm model with learned sparsity masks
+            output_path = self.apply_sdm_plus_sgh(base_model_path, variant_dir)
 
         elif method == 'apply_challenge':
             # Apply magnitude pruning + uniform LoRA
@@ -400,9 +404,91 @@ class CompleteValidationOrchestrator:
             shutil.copy2(base_model_path, output_path)
             return str(output_path)
     
-    def apply_challenge_baseline(self, base_model_path: str, output_dir: Path) -> str:
-        """Apply magnitude pruning and uniform LoRA using helper script."""
-        print("Applying challenge baseline (magnitude pruning + uniform LoRA)...")
+    def apply_sdm_plus_sgh(self, base_model_path: str, output_dir: Path) -> str:
+        """Apply SGH-PEFT to M_sdm model using learned sparsity masks."""
+        print("Applying SGH-PEFT to M_sdm with learned sparsity masks...")
+
+        # First ensure we have M_sdm model
+        sdm_model_path = self.models_dir / "M_sdm" / "model_sdm.pt"
+        if not sdm_model_path.exists():
+            print("M_sdm model not found, generating it first...")
+            sdm_dir = self.models_dir / "M_sdm"
+            sdm_dir.mkdir(exist_ok=True)
+            sdm_model_path = Path(self.apply_sdm_to_base(base_model_path, sdm_dir))
+
+        try:
+            from models.sdm_ssm import SDM_SSM
+            from models.sgh_peft import SGHPEFTConfig, create_sgh_peft_model
+            import torch
+
+            # Load M_sdm model
+            checkpoint = torch.load(sdm_model_path, map_location="cpu")
+            sdm_model = SDM_SSM(
+                d_model=768, n_layer=12, vocab_size=50257,
+                d_state=16, d_conv=4, gumbel_temp=1.0
+            )
+
+            if isinstance(checkpoint, dict) and 'model_state_dict' in checkpoint:
+                sdm_model.load_state_dict(checkpoint['model_state_dict'])
+            else:
+                sdm_model.load_state_dict(checkpoint)
+
+            # Extract learned sparsity patterns from SDM
+            importance_scores = {}
+            with torch.no_grad():
+                for idx, layer in enumerate(sdm_model.layers):
+                    layer_name = f"layers.{idx}"
+                    
+                    # Get learned sparsity mask from z_logits
+                    z_logits = layer.z_logits.detach()
+                    sparsity_mask = (z_logits > 0).float()
+                    
+                    # Compute importance based on learned patterns
+                    active_channels = sparsity_mask.sum().item()
+                    total_channels = len(sparsity_mask)
+                    sparsity_level = 1.0 - (active_channels / total_channels)
+                    
+                    # Use z_logits as importance metric
+                    mean_importance = z_logits.mean().item()
+                    std_importance = z_logits.std().item()
+                    
+                    importance_scores[layer_name] = {
+                        "mean_importance": mean_importance,
+                        "std_importance": std_importance,
+                        "max_importance": z_logits.max().item(),
+                        "min_importance": z_logits.min().item(),
+                        "active_channels": int(active_channels),
+                        "total_channels": int(total_channels),
+                        "sparsity_level": sparsity_level,
+                        "sparsity_mask": sparsity_mask,
+                    }
+
+            # Create SGH-PEFT model with learned sparsity patterns
+            config = SGHPEFTConfig(
+                apply_sparsity_mask=True,  # Use learned sparsity masks
+                freeze_base_model=True
+            )
+            
+            sgh_model = create_sgh_peft_model(
+                sdm_model, config, layer_importance_scores=importance_scores
+            )
+
+            output_path = output_dir / "model_sdm_plus_sgh.pt"
+            torch.save({"model_state_dict": sgh_model.state_dict()}, output_path)
+
+            print(f"✓ M_sdm+sgh model created with learned sparsity masks")
+            return str(output_path)
+
+        except Exception as e:
+            print(f"⚠ M_sdm+sgh generation failed: {e}")
+            import traceback
+            traceback.print_exc()
+            # Fallback: copy base model
+            import shutil
+            output_path = output_dir / "model_sdm_plus_sgh.pt"
+            shutil.copy2(base_model_path, output_path)
+            return str(output_path)
+    
     def apply_challenge_baseline(self, base_model_path: str, output_dir: Path) -> str:
         """Apply magnitude pruning + uniform LoRA."""
         print("Applying challenge baseline (magnitude pruning + uniform LoRA)...")
@@ -422,9 +508,9 @@ class CompleteValidationOrchestrator:
         else:
             model.load_state_dict(checkpoint)
 
-        # Determine sparsity ratio from M_SDM if available
+        # Determine sparsity ratio from M_sdm if available
         sparsity_ratio = 0.176
-        sdm_checkpoint = self.models_dir / "M_SDM" / "model_sdm.pt"
+        sdm_checkpoint = self.models_dir / "M_sdm" / "model_sdm.pt"
         if sdm_checkpoint.is_file():
             ckpt = torch.load(sdm_checkpoint, map_location="cpu")
             state_dict = ckpt.get("model_state_dict", ckpt)
@@ -501,7 +587,7 @@ class CompleteValidationOrchestrator:
         torch.save({"model_state_dict": model.state_dict()}, output_path)
 
         print(f"✓ Challenge baseline model created")
-        return str(output_path)        return str(output_path)
+        return str(output_path)
     
     def run_full_pipeline(self, base_model_path: str, output_dir: Path) -> str:
         """Run the complete three-pillar pipeline."""
@@ -617,6 +703,42 @@ class CompleteValidationOrchestrator:
         
         return validation_results
     
+    def run_statistical_testing(self, validation_results: Dict[str, Dict]) -> Dict[str, Any]:
+        """Run comprehensive statistical significance testing."""
+        print("Running statistical significance testing...")
+        
+        try:
+            from utils.statistical_testing import run_comprehensive_model_comparison, save_statistical_results, generate_statistical_report
+            
+            # Run comprehensive comparison
+            statistical_results = run_comprehensive_model_comparison(
+                validation_results=validation_results,
+                num_seeds=5,
+                alpha=0.05
+            )
+            
+            # Save results
+            stats_file = self.results_dir / "statistical_testing.json"
+            save_statistical_results(statistical_results, stats_file)
+            
+            # Generate report
+            report_file = self.results_dir / "statistical_report.txt"
+            generate_statistical_report(statistical_results, report_file)
+            
+            print(f"✓ Statistical testing results saved to {stats_file}")
+            print(f"✓ Statistical report saved to {report_file}")
+            
+            return statistical_results
+            
+        except ImportError as e:
+            print(f"⚠ Statistical testing module not available: {e}")
+            return {}
+        except Exception as e:
+            print(f"⚠ Statistical testing failed: {e}")
+            import traceback
+            traceback.print_exc()
+            return {}
+    
     def run_complete_validation(self, base_model_path: str) -> Dict[str, any]:
         """
         Run the complete validation process.
@@ -652,8 +774,17 @@ class CompleteValidationOrchestrator:
             {k: v for k, v in model_paths.items() if v is not None}
         )
         
-        # Phase 3: Generate analysis and plots
-        print(f"\n📊 PHASE 3: RESULTS ANALYSIS")
+        # Phase 3: Statistical Significance Testing
+        print(f"\n🧮 PHASE 3: STATISTICAL SIGNIFICANCE TESTING")
+        try:
+            statistical_results = self.run_statistical_testing(validation_results)
+            print("✓ Statistical significance testing completed")
+        except Exception as e:
+            print(f"⚠ Statistical testing error: {e}")
+            statistical_results = {}
+
+        # Phase 4: Generate analysis and plots
+        print(f"\n📊 PHASE 4: RESULTS ANALYSIS")
         try:
             cmd = [
                 sys.executable, "scripts/analyze_results.py",
@@ -671,9 +802,9 @@ class CompleteValidationOrchestrator:
         except Exception as e:
             print(f"⚠ Results analysis error: {e}")
         
-        # Phase 4: Generate final report
-        print(f"\n📋 PHASE 4: FINAL REPORT GENERATION")
-        final_results = self.generate_final_report(model_paths, validation_results)
+        # Phase 5: Generate final report
+        print(f"\n📋 PHASE 5: FINAL REPORT GENERATION")
+        final_results = self.generate_final_report(model_paths, validation_results, statistical_results)
         
         total_time = time.time() - start_time
         
@@ -685,7 +816,7 @@ class CompleteValidationOrchestrator:
         
         return final_results
     
-    def generate_final_report(self, model_paths: Dict[str, str], validation_results: Dict[str, Dict]) -> Dict[str, any]:
+    def generate_final_report(self, model_paths: Dict[str, str], validation_results: Dict[str, Dict], statistical_results: Dict[str, Any] = None) -> Dict[str, any]:
         """Generate comprehensive final report."""
         print("Generating final report...")
         
@@ -708,9 +839,10 @@ class CompleteValidationOrchestrator:
                 'paths': model_paths
             },
             'validation_results': validation_results,
+            'statistical_testing': statistical_results or {},
             'hypothesis_validation': self.validate_hypotheses(validation_results),
             'key_metrics': self.extract_key_metrics(validation_results),
-            'conclusions': self.generate_conclusions(validation_results)
+            'conclusions': self.generate_conclusions(validation_results, statistical_results)
         }
         
         # Save final report
@@ -727,9 +859,9 @@ class CompleteValidationOrchestrator:
         hypotheses = {}
         
         # H1: CSP reduces latency
-        if 'M_base' in validation_results and 'M_CSP' in validation_results:
+        if 'M_base' in validation_results and 'M_csp' in validation_results:
             base_latency = validation_results['M_base'].get('latency_ms_per_token', 0)
-            csp_latency = validation_results['M_CSP'].get('latency_ms_per_token', 0)
+            csp_latency = validation_results['M_csp'].get('latency_ms_per_token', 0)
             
             if base_latency > 0 and csp_latency > 0:
                 improvement = (base_latency - csp_latency) / base_latency * 100
@@ -740,9 +872,9 @@ class CompleteValidationOrchestrator:
                 }
         
         # H2: SDM reduces FLOPs
-        if 'M_base' in validation_results and 'M_SDM' in validation_results:
+        if 'M_base' in validation_results and 'M_sdm' in validation_results:
             base_flops = validation_results['M_base'].get('flops_per_token', 0)
-            sdm_flops = validation_results['M_SDM'].get('flops_per_token', 0)
+            sdm_flops = validation_results['M_sdm'].get('flops_per_token', 0)
             
             if base_flops > 0 and sdm_flops > 0:
                 reduction = (base_flops - sdm_flops) / base_flops * 100
@@ -753,9 +885,9 @@ class CompleteValidationOrchestrator:
                 }
         
         # H3: SGH-PEFT improves parameter efficiency
-        if 'M_challenge' in validation_results and 'M_SGH' in validation_results:
+        if 'M_challenge' in validation_results and 'M_sgh' in validation_results:
             challenge_params = validation_results['M_challenge'].get('trainable_parameters', 0)
-            sgh_params = validation_results['M_SGH'].get('trainable_parameters', 0)
+            sgh_params = validation_results['M_sgh'].get('trainable_parameters', 0)
             
             if challenge_params > 0 and sgh_params > 0:
                 efficiency = (challenge_params - sgh_params) / challenge_params * 100
@@ -811,7 +943,7 @@ class CompleteValidationOrchestrator:
         
         return key_metrics
     
-    def generate_conclusions(self, validation_results: Dict[str, Dict]) -> List[str]:
+    def generate_conclusions(self, validation_results: Dict[str, Dict], statistical_results: Dict[str, Any] = None) -> List[str]:
         """Generate key conclusions for the paper."""
         conclusions = [
             "The hardware-data-parameter co-design framework successfully demonstrates synergistic benefits across all optimization axes.",
@@ -820,6 +952,30 @@ class CompleteValidationOrchestrator:
             "Learned sparsity from SDM provides better compression than heuristic methods while maintaining performance.",
             "SGH-PEFT's importance-guided allocation significantly improves parameter efficiency over uniform strategies."
         ]
+        
+        # Add statistical significance conclusions if available
+        if statistical_results and 'summary' in statistical_results:
+            summary = statistical_results['summary']
+            if summary['significant_improvements'] > 0:
+                conclusions.append(
+                    f"Statistical testing confirms {summary['significant_improvements']} significant improvements "
+                    f"across {summary['total_comparisons']} pairwise model comparisons (α=0.05, Holm-Sidak correction)."
+                )
+            
+            # Check for M_full dominance
+            if 'pairwise_comparisons' in statistical_results:
+                m_full_improvements = 0
+                for comparison_name, comparison_data in statistical_results['pairwise_comparisons'].items():
+                    if 'M_full' in comparison_name:
+                        for metric, result in comparison_data.items():
+                            if result['statistical_test']['is_significant'] and result['improvement_percent'] > 0:
+                                m_full_improvements += 1
+                
+                if m_full_improvements > 0:
+                    conclusions.append(
+                        f"M_full demonstrates statistically significant superiority in {m_full_improvements} "
+                        f"metrics compared to other model variants."
+                    )
         
         return conclusions
 
@@ -831,7 +987,7 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 This script performs the complete experimental validation:
-1. Generates all model variants (M_base, M_CSP, M_SDM, M_SGH, M_challenge, M_full)
+1. Generates all model variants (M_base, M_csp, M_sdm, M_sgh, M_sdm+sgh, M_challenge, M_full)
 2. Validates all hypotheses (H1-H4) with comprehensive metrics
 3. Generates publication-ready plots and analysis
 4. Creates final results summary for the research paper

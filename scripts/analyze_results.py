@@ -49,9 +49,9 @@ class ResultsAnalyzer:
         # Model group information
         self.model_groups = {
             'M_base': {'name': 'M_base', 'color': '#1f77b4', 'marker': 'o', 'description': 'Baseline'},
-            'M_CSP': {'name': 'M_CSP', 'color': '#ff7f0e', 'marker': 's', 'description': 'CSP (Pillar 1)'},
-            'M_SDM': {'name': 'M_SDM', 'color': '#2ca02c', 'marker': '^', 'description': 'SDM (Pillar 2)'},
-            'M_SGH': {'name': 'M_SGH', 'color': '#d62728', 'marker': 'v', 'description': 'SGH-PEFT (Proxy)'},
+            'M_csp': {'name': 'M_csp', 'color': '#ff7f0e', 'marker': 's', 'description': 'CSP (Pillar 1)'},
+            'M_sdm': {'name': 'M_sdm', 'color': '#2ca02c', 'marker': '^', 'description': 'SDM (Pillar 2)'},
+            'M_sgh': {'name': 'M_sgh', 'color': '#d62728', 'marker': 'v', 'description': 'SGH-PEFT (Proxy)'},
             'M_challenge': {'name': 'M_challenge', 'color': '#9467bd', 'marker': 'D', 'description': 'Magnitude + LoRA'},
             'M_full': {'name': 'M_full', 'color': '#e377c2', 'marker': '*', 'description': 'Full Co-Design'}
         }
@@ -95,7 +95,7 @@ class ResultsAnalyzer:
                 'trainable_parameters': int(base_params),
                 'glue_sst2_accuracy': base_accuracy
             }
-        elif group_name == 'M_CSP':
+        elif group_name == 'M_csp':
             return {
                 'model_group': group_name,
                 'flops_per_token': int(base_flops / 1024),  # Same FLOPs
@@ -106,7 +106,7 @@ class ResultsAnalyzer:
                 'trainable_parameters': int(base_params),
                 'glue_sst2_accuracy': base_accuracy + 0.01
             }
-        elif group_name == 'M_SDM':
+        elif group_name == 'M_sdm':
             return {
                 'model_group': group_name,
                 'flops_per_token': int(base_flops * 0.824 / 1024),  # 17.6% FLOPs reduction
@@ -117,7 +117,7 @@ class ResultsAnalyzer:
                 'trainable_parameters': int(base_params * 0.824),
                 'glue_sst2_accuracy': base_accuracy - 0.005
             }
-        elif group_name == 'M_SGH':
+        elif group_name == 'M_sgh':
             return {
                 'model_group': group_name,
                 'flops_per_token': int(base_flops / 1024),
@@ -274,7 +274,7 @@ class ResultsAnalyzer:
         fig.suptitle('Ablation Study: Individual Pillar Contributions', fontsize=16, fontweight='bold')
         
         # Define ablation groups
-        ablation_groups = ['M_base', 'M_CSP', 'M_SDM', 'M_full']
+        ablation_groups = ['M_base', 'M_csp', 'M_sdm', 'M_full']
         metrics = ['latency_ms_per_token', 'flops_per_token', 'trainable_parameters', 'glue_sst2_accuracy']
         titles = ['Latency (ms/token)', 'FLOPs per token', 'Trainable Parameters', 'GLUE SST-2 Accuracy']
         
@@ -355,21 +355,21 @@ class ResultsAnalyzer:
             {
                 'name': 'H1: CSP Reduces Latency',
                 'baseline': 'M_base',
-                'treatment': 'M_CSP',
+                'treatment': 'M_csp',
                 'metric': 'latency_ms_per_token',
                 'better': 'lower'
             },
             {
                 'name': 'H2: SDM Reduces FLOPs', 
                 'baseline': 'M_base',
-                'treatment': 'M_SDM',
+                'treatment': 'M_sdm',
                 'metric': 'flops_per_token',
                 'better': 'lower'
             },
             {
                 'name': 'H3: SGH-PEFT Efficiency',
                 'baseline': 'M_challenge',
-                'treatment': 'M_SGH',
+                'treatment': 'M_sgh',
                 'metric': 'trainable_parameters',
                 'better': 'lower'
             },

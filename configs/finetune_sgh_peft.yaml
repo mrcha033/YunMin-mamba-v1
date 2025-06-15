@@ -33,8 +33,9 @@ sgh_peft:
 
 # Training configuration
 training:
-  batch_size: 16               # Smaller batch size for fine-tuning
-  learning_rate: 5e-5          # Lower learning rate for fine-tuning
+  batch_size: 32               # Larger global batch size for fine-tuning
+  micro_batch_size: 8          # Per-device batch size
+  learning_rate: 1e-4          # Updated learning rate for fine-tuning
   weight_decay: 0.01
   warmup_steps: 100            # Fewer warmup steps for fine-tuning
   max_steps: 2000              # Task-dependent, adjust per GLUE task

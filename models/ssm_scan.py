@@ -272,45 +272,44 @@ class SelectiveSSM(nn.Module):
         C: torch.Tensor
     ) -> torch.Tensor:
         """
-        Sequential selective scan. Slower but less memory-intensive.
+        Sequential selective scan, fully implemented to return hidden states.
+        
+        This is slower but uses less memory. Useful for inference or very long sequences.
         """
         B_batch, L, D = x.shape
         N = A.shape[-1]
         
         # Initialize hidden state
-        h = torch.zeros(B_batch, D, N, device=x.device, dtype=x.dtype)
+        h = torch.zeros(B_batch, D, N, device=x.device)
         
-        # Output buffer
-        ys = []
-        hs = [] # Buffer for hidden states
-        
-        for t in range(L):
-            # Get parameters for this timestep
-            dt_t = dt[:, t, :]  # (B, D)
-            B_t = B[:, t, :]    # (B, N)
-            C_t = C[:, t, :]    # (B, N)
-            x_t = x[:, t, :]    # (B, D)
+        y_list = []
+        h_list = []
+
+        # Iterate over sequence length
+        for i in range(L):
+            # Discretize A and B for current timestep
+            dA = torch.exp(dt[:, i].unsqueeze(-1) * A)
+            dB = dt[:, i].unsqueeze(-1) * B[:, i].unsqueeze(1)
             
-            # Discretize A and B
-            dA = torch.exp(dt_t.unsqueeze(-1) * A.unsqueeze(0))  # (B, D, N)
-            dB = dt_t.unsqueeze(-1) * B_t.unsqueeze(1)  # (B, D, N)
+            # Update hidden state (avoiding in-place operation)
+            h = dA * h + dB * x[:, i].unsqueeze(-1)
+            h_list.append(h)
             
-            # State update: h = A * h + B * x
-            h = dA * h + dB * x_t.unsqueeze(-1)  # (B, D, N)
-            hs.append(h)
+            # Calculate output for current timestep
+            current_y = torch.einsum('bdn,bdn->bd', h, C[:, i])
+            y_list.append(current_y)
             
-            # Output: y = C * h
-            y_t = torch.einsum('bdn,bn->bd', h, C_t)  # (B, D)
-            ys.append(y_t)
-        
-        y = torch.stack(ys, dim=1)  # (B, L, D)
-        h_sequence = torch.stack(hs, dim=0) # (L, B, D, N)
-        return y, h_sequence
+        y = torch.stack(y_list, dim=1)
+
+        # Stack hidden states and permute to (L, B, D, N) for compatibility with CSP
+        h_seq = torch.stack(h_list, dim=1) # (B, L, D, N)
+        h_seq = h_seq.permute(1, 0, 2, 3) # (L, B, D, N)
+
+        return y, h_seq
 
     def _create_mask(self) -> torch.Tensor:
         """
-        Generates a differentiable or deterministic mask based on training mode.
-        (Only used if use_sdm=True)
+        Create a binary mask for SDM using Gumbel-Sigmoid.
         
         Returns:
             Tensor of shape (d_inner,) containing mask values

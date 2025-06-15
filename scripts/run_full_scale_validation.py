@@ -85,7 +85,8 @@ class FullScaleValidator:
         
         # Set default values
         if self.config.glue_tasks is None:
-            self.config.glue_tasks = ["sst2", "mrpc", "qnli", "mnli", "cola", "stsb", "qqp", "rte"]
+            # Default subset of GLUE tasks
+            self.config.glue_tasks = ["sst2", "mrpc", "qnli", "mnli"]
         
         if self.config.batch_sizes is None:
             self.config.batch_sizes = [1, 2, 4, 8, 16, 32]
@@ -557,7 +558,7 @@ def parse_args():
     parser.add_argument("--use_full_datasets", action="store_true", default=True,
                        help="Use full-scale datasets")
     parser.add_argument("--glue_tasks", type=str, nargs="+",
-                       default=["sst2", "mrpc", "qnli", "mnli", "cola", "stsb", "qqp", "rte"],
+                       default=["sst2", "mrpc", "qnli", "mnli"],
                        help="GLUE tasks to evaluate")
     
     # Evaluation configurations

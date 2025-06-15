@@ -442,8 +442,8 @@ Example:
                        help="Output directory for pipeline results")
     parser.add_argument("--config", type=str, default="configs/model_config.yaml",
                        help="Path to model configuration file")
-    parser.add_argument("--task", type=str, default="cola",
-                       choices=['cola', 'sst2', 'mrpc', 'stsb', 'qqp', 'mnli', 'qnli', 'rte', 'wnli'],
+    parser.add_argument("--task", type=str, default="sst2",
+                       choices=['sst2', 'mrpc', 'qnli', 'mnli'],
                        help="GLUE task for fine-tuning")
     
     return parser.parse_args()

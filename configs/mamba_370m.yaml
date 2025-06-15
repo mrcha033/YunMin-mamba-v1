@@ -72,6 +72,7 @@ training:
     min_lr_ratio: 0.1
     
     # Task-specific epochs (3-10 range with early stopping)
+    # Default subset: sst2, mrpc, qnli, mnli
     epochs:
       sst2: 5
       mnli: 8

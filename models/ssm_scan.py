@@ -242,15 +242,14 @@ class SelectiveSSM(nn.Module):
         chunk_size: int = 64,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Performs the scan operation by breaking the sequence into smaller chunks.
-        This is the core memory optimization for the forward pass.
+        Performs the scan operation by breaking the sequence into smaller chunks
+        and processing each chunk sequentially. This is the most memory-efficient
+        approach for a pure PyTorch implementation.
         """
         batch_size, L, D = x.shape
         N = A.shape[-1]
 
         if L % chunk_size != 0:
-            # For simplicity, we require the sequence length to be divisible by the chunk size.
-            # This can be relaxed with padding if necessary.
             raise ValueError(f"Sequence length {L} must be divisible by chunk_size {chunk_size}")
 
         num_chunks = L // chunk_size
@@ -258,7 +257,7 @@ class SelectiveSSM(nn.Module):
         h = torch.zeros(batch_size, D, N, device=x.device, dtype=x.dtype)
         
         ys, h_states = [], []
-        
+
         for i in range(num_chunks):
             start = i * chunk_size
             end = (i + 1) * chunk_size
@@ -267,29 +266,25 @@ class SelectiveSSM(nn.Module):
             dt_chunk = dt[:, start:end]
             B_chunk = B[:, start:end]
             C_chunk = C[:, start:end]
+
+            # Process the chunk sequentially
+            h_list_chunk = []
+            for j in range(chunk_size):
+                # Discretize for the current timestep
+                dA_t = torch.exp(dt_chunk[:, j].unsqueeze(-1) * A) # (B, D, N)
+                dB_t = dt_chunk[:, j].unsqueeze(-1) * B_chunk[:, j].unsqueeze(1) # (B, D, N)
+                
+                # Update hidden state
+                h = dA_t * h + dB_t * x_chunk[:, j].unsqueeze(-1)
+                h_list_chunk.append(h)
             
-            # Discretize A and B for the current chunk
-            dA_chunk = torch.exp(dt_chunk.unsqueeze(-1) * A.unsqueeze(0).unsqueeze(0)) # (B, chunk_size, D, N)
-            dB_chunk = dt_chunk.unsqueeze(-1) * B_chunk.unsqueeze(2) # (B, chunk_size, D, N)
-            
-            # Run the parallel scan on the chunk
-            # The initial hidden state `h` is broadcasted and added to the input
-            chunk_scan_input = dB_chunk * x_chunk.unsqueeze(-1)
-            
-            # Propagate the hidden state from the previous chunk
-            h_broadcast = torch.einsum('b...n,b...dn->b...dn', dA_chunk, h.unsqueeze(1))
-            
-            # The h from parallel_scan is the sequence of hidden states within the chunk
-            h_chunk = self.parallel_scan(dA_chunk, chunk_scan_input) + h_broadcast
+            h_chunk = torch.stack(h_list_chunk, dim=1) # (B, chunk_size, D, N)
             
             # Compute the output for the chunk
             y_chunk = torch.einsum('bldn,bln->bld', h_chunk, C_chunk)
             
             ys.append(y_chunk)
-            h_states.append(h_chunk) # Store for CSP if needed
-            
-            # Update the hidden state for the next chunk
-            h = h_chunk[:, -1]
+            h_states.append(h_chunk)
 
         # Combine results from all chunks
         y = torch.cat(ys, dim=1)
@@ -378,35 +373,6 @@ class SelectiveSSM(nn.Module):
                 'num_channels_kept': deterministic_kept.sum().item(),
                 'total_channels': len(self.z_logits)
             }
-
-    def parallel_scan(self, A: torch.Tensor, X: torch.Tensor) -> torch.Tensor:
-        """
-        Perform a parallel scan (prefix sum) over the sequence dimension.
-        This implementation uses a more efficient matrix-multiplication based
-        approach to avoid explicit Python loops, significantly improving performance.
-        """
-        B, L, D, N = A.shape
-        
-        # Pre-compute the products of A matrices
-        # A_prods[l] = A_l * A_{l-1} * ... * A_0
-        A_prods = torch.zeros_like(A)
-        A_prods[:, 0] = A[:, 0]
-        for l in range(1, L):
-            A_prods[:, l] = A[:, l] * A_prods[:, l-1]
-
-        # Use broadcasting and matrix multiplication for the scan
-        # This is significantly faster than a Python for-loop
-        lower_tri = torch.tril(torch.ones(L, L, device=A.device), diagonal=-1)
-        
-        # Create a tensor for shifted A_prods
-        A_prods_shifted = torch.cat([torch.ones_like(A_prods[:, :1]), A_prods[:, :-1]], dim=1)
-
-        # Calculate the scan using tensor operations
-        # The core idea is to express the sequential dependency as a matrix multiplication
-        # with a triangular matrix, which PyTorch can compute efficiently.
-        H = (A_prods.unsqueeze(2) * torch.reciprocal(A_prods_shifted).unsqueeze(1) * lower_tri.view(1, L, L, 1, 1)).matmul(X.unsqueeze(2)).squeeze(2)
-
-        return H
 
 
 def create_ssm_scan_function(

@@ -9,16 +9,16 @@ model:
   d_conv: 4
 
 training:
-  batch_size: 24  # Slightly smaller due to additional memory for masks
-  learning_rate: 8e-5  # Lower LR for stable sparsity learning
-  weight_decay: 0.1
-  warmup_steps: 2000  # More warmup for sparsity stabilization
-  max_steps: 50000  # Shorter training focused on sparsity learning
-  gradient_accumulation_steps: 4
-  max_grad_norm: 1.0
+  pretrain:
+    batch_size: 24  # Slightly smaller due to additional memory for masks
+    micro_batch_size: 6  # Added micro batch size for proper gradient accumulation
+    learning_rate: 8e-5  # Lower LR for stable sparsity learning
+    weight_decay: 0.1
+    warmup_steps: 2000  # More warmup for sparsity stabilization
+    max_epochs: 15  # Shorter training focused on sparsity learning
+    max_grad_norm: 1.0
 
 data:
-  dataset_name: "wikitext-103-raw-v1"
   max_length: 1024
   num_workers: 4
 

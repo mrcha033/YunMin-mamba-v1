@@ -190,9 +190,24 @@ def main():
     args = parse_args()
     config = load_config(args.config)
     
+    # Handle nested config structure first
+    training_config = config.get('training', {})
+    if 'pretrain' in training_config:
+        # New nested structure
+        pretrain_config = training_config['pretrain']
+        conceptual_batch_size = int(pretrain_config.get('batch_size', 32))
+        micro_batch_size = int(pretrain_config.get('micro_batch_size', 8))
+    else:
+        # Legacy flat structure
+        conceptual_batch_size = int(training_config.get('batch_size', 32))
+        micro_batch_size = int(training_config.get('micro_batch_size', 8))
+    
+    # Calculate gradient accumulation steps
+    actual_gradient_accumulation_steps = max(1, conceptual_batch_size // micro_batch_size)
+    
     # Initialize accelerator
     accelerator = Accelerator(
-        gradient_accumulation_steps=config['training']['gradient_accumulation_steps'],
+        gradient_accumulation_steps=actual_gradient_accumulation_steps,
         log_with="wandb" if config['logging'].get('wandb_project') else None
     )
     
@@ -268,34 +283,53 @@ def main():
         for key, value in config['sdm'].items():
             logger.info(f"  {key}: {value}")
     
+    # Get remaining training parameters
+    if 'pretrain' in training_config:
+        learning_rate = float(pretrain_config.get('learning_rate', 1e-4))
+        weight_decay = float(pretrain_config.get('weight_decay', 0.1))
+        warmup_steps = int(pretrain_config.get('warmup_steps', 1000))
+        max_grad_norm = float(pretrain_config.get('max_grad_norm', 1.0))
+        max_steps = int(pretrain_config.get('max_epochs', 20)) * 1000  # Convert epochs to steps estimate
+    else:
+        learning_rate = float(training_config.get('learning_rate', 1e-4))
+        weight_decay = float(training_config.get('weight_decay', 0.1))
+        warmup_steps = int(training_config.get('warmup_steps', 1000))
+        max_grad_norm = float(training_config.get('max_grad_norm', 1.0))
+        max_steps = int(training_config.get('max_steps', 20000))
+    
+    # Get data configuration
+    data_config = config.get('data', {})
+    max_length = int(data_config.get('max_length', 1024))
+    num_workers = int(data_config.get('num_workers', 4))
+    
     # Create data loaders
     train_dataloader = get_wiktext103_dataloader(
         tokenizer_name="gpt2",
-        batch_size=config['training']['batch_size'],
-        max_length=config['data']['max_length'],
+        batch_size=micro_batch_size,
+        max_length=max_length,
         split="train",
-        num_workers=config['data']['num_workers']
+        num_workers=num_workers
     )
     
     val_dataloader = get_wiktext103_dataloader(
         tokenizer_name="gpt2",
-        batch_size=config['training']['batch_size'],
-        max_length=config['data']['max_length'],
+        batch_size=micro_batch_size,
+        max_length=max_length,
         split="validation",
-        num_workers=config['data']['num_workers']
+        num_workers=num_workers
     )
     
     # Initialize optimizer and scheduler
     optimizer = torch.optim.AdamW(
         model.parameters(),
-        lr=config['training']['learning_rate'],
-        weight_decay=config['training']['weight_decay']
+        lr=learning_rate,
+        weight_decay=weight_decay
     )
     
-    num_training_steps = config['training']['max_steps']
+    num_training_steps = max_steps
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
-        num_warmup_steps=config['training']['warmup_steps'],
+        num_warmup_steps=warmup_steps,
         num_training_steps=num_training_steps
     )
     
@@ -350,7 +384,7 @@ def main():
                 
                 # Gradient clipping
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(model.parameters(), config['training']['max_grad_norm'])
+                    accelerator.clip_grad_norm_(model.parameters(), max_grad_norm)
                 
                 optimizer.step()
                 scheduler.step()

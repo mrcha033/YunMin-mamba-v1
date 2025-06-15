@@ -10,12 +10,12 @@ model:
 
 training:
   pretrain:
-    batch_size: 24  # Slightly smaller due to additional memory for masks
-    micro_batch_size: 6  # Added micro batch size for proper gradient accumulation
-    learning_rate: 8e-5  # Lower LR for stable sparsity learning
+    batch_size: 128  # Match experimental description
+    micro_batch_size: 8  # Adjusted for proper gradient accumulation
+    learning_rate: 2e-4  # Match experimental description
     weight_decay: 0.1
-    warmup_steps: 2000  # More warmup for sparsity stabilization
-    max_epochs: 15  # Shorter training focused on sparsity learning
+    warmup_steps_ratio: 0.1  # 10% of total training steps as per description
+    max_epochs: 20  # Match experimental description
     max_grad_norm: 1.0
 
 data:

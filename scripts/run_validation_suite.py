@@ -550,6 +550,131 @@ class ValidationSuite:
 
         return base_model
     
+    def verify_iso_sparsity(self, sdm_model_path: str, challenge_model_path: str) -> Dict[str, Any]:
+        """
+        Verify challenge baseline matches SDM sparsity exactly.
+        
+        This function ensures fair comparison by validating that M_challenge
+        has the same sparsity level as M_SDM, as required by the experimental description.
+        
+        Args:
+            sdm_model_path: Path to M_SDM checkpoint
+            challenge_model_path: Path to M_challenge checkpoint
+            
+        Returns:
+            Dictionary with sparsity comparison results
+        """
+        print("🔍 Verifying iso-sparsity between M_SDM and M_challenge...")
+        
+        results = {
+            "sdm_path": sdm_model_path,
+            "challenge_path": challenge_model_path,
+            "sdm_sparsity": -1.0,
+            "challenge_sparsity": -1.0,
+            "sparsity_difference": -1.0,
+            "iso_sparsity_verified": False,
+            "tolerance": 0.01  # 1% tolerance
+        }
+        
+        try:
+            # Extract M_SDM sparsity from z_logits
+            if os.path.isfile(sdm_model_path):
+                sdm_checkpoint = torch.load(sdm_model_path, map_location="cpu")
+                sdm_state_dict = sdm_checkpoint.get("model_state_dict", sdm_checkpoint)
+                
+                z_keys = [k for k in sdm_state_dict.keys() if k.endswith("z_logits")]
+                if z_keys:
+                    total_channels = kept_channels = 0
+                    layer_sparsities = []
+                    
+                    for k in z_keys:
+                        z = sdm_state_dict[k]
+                        layer_total = z.numel()
+                        layer_kept = (z > 0).float().sum().item()
+                        layer_sparsity = 1.0 - (layer_kept / layer_total)
+                        
+                        total_channels += layer_total
+                        kept_channels += layer_kept
+                        layer_sparsities.append(layer_sparsity)
+                    
+                    if total_channels > 0:
+                        results["sdm_sparsity"] = 1.0 - kept_channels / total_channels
+                        print(f"  📊 M_SDM sparsity: {results['sdm_sparsity']:.4f} ({results['sdm_sparsity']:.2%})")
+                        print(f"     Total channels: {total_channels}, Kept: {kept_channels}")
+                        print(f"     Per-layer sparsity range: {min(layer_sparsities):.2%} - {max(layer_sparsities):.2%}")
+                    else:
+                        print("  ⚠️  No valid z_logits found in M_SDM checkpoint")
+                else:
+                    print("  ⚠️  No z_logits found in M_SDM checkpoint")
+            else:
+                print(f"  ❌ M_SDM checkpoint not found: {sdm_model_path}")
+            
+            # Extract M_challenge sparsity from pruned weights
+            if os.path.isfile(challenge_model_path):
+                challenge_checkpoint = torch.load(challenge_model_path, map_location="cpu")
+                challenge_state_dict = challenge_checkpoint.get("model_state_dict", challenge_checkpoint)
+                
+                # Look for in_proj weights and count zero channels
+                layer_weights = [k for k in challenge_state_dict.keys() if k.endswith("in_proj.weight")]
+                
+                if layer_weights:
+                    total_channels = pruned_channels = 0
+                    layer_sparsities = []
+                    
+                    for k in layer_weights:
+                        weight = challenge_state_dict[k]
+                        if weight.numel() > 0:
+                            # Get first half of in_proj (x projection)
+                            d_inner = weight.shape[0] // 2
+                            x_proj_weight = weight[:d_inner]
+                            
+                            # Count channels with zero magnitude
+                            channel_magnitudes = x_proj_weight.abs().mean(dim=1)
+                            zero_channels = (channel_magnitudes < 1e-8).sum().item()
+                            layer_sparsity = zero_channels / d_inner
+                            
+                            total_channels += d_inner
+                            pruned_channels += zero_channels
+                            layer_sparsities.append(layer_sparsity)
+                    
+                    if total_channels > 0:
+                        results["challenge_sparsity"] = pruned_channels / total_channels
+                        print(f"  📊 M_challenge sparsity: {results['challenge_sparsity']:.4f} ({results['challenge_sparsity']:.2%})")
+                        print(f"     Total channels: {total_channels}, Pruned: {pruned_channels}")
+                        print(f"     Per-layer sparsity range: {min(layer_sparsities):.2%} - {max(layer_sparsities):.2%}")
+                    else:
+                        print("  ⚠️  No valid weight tensors found in M_challenge checkpoint")
+                else:
+                    print("  ⚠️  No in_proj weights found in M_challenge checkpoint")
+            else:
+                print(f"  ❌ M_challenge checkpoint not found: {challenge_model_path}")
+            
+            # Compare sparsity levels
+            if results["sdm_sparsity"] >= 0 and results["challenge_sparsity"] >= 0:
+                results["sparsity_difference"] = abs(results["sdm_sparsity"] - results["challenge_sparsity"])
+                results["iso_sparsity_verified"] = results["sparsity_difference"] <= results["tolerance"]
+                
+                print(f"\n  🎯 SPARSITY COMPARISON:")
+                print(f"     M_SDM:       {results['sdm_sparsity']:.4f} ({results['sdm_sparsity']:.2%})")
+                print(f"     M_challenge: {results['challenge_sparsity']:.4f} ({results['challenge_sparsity']:.2%})")
+                print(f"     Difference:  {results['sparsity_difference']:.4f} ({results['sparsity_difference']:.2%})")
+                print(f"     Tolerance:   {results['tolerance']:.4f} ({results['tolerance']:.2%})")
+                
+                if results["iso_sparsity_verified"]:
+                    print(f"  ✅ ISO-SPARSITY VERIFIED: Fair comparison ensured!")
+                else:
+                    print(f"  ❌ ISO-SPARSITY VIOLATION: Sparsity difference exceeds tolerance!")
+                    print(f"     This may lead to unfair comparison between learned vs. heuristic pruning.")
+            else:
+                print(f"  ⚠️  Could not extract sparsity from one or both checkpoints")
+                
+        except Exception as e:
+            print(f"  ❌ Sparsity verification failed: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        return results
+    
     def create_standard_lora(self, base_model: nn.Module) -> nn.Module:
         """Create model with standard uniform LoRA."""
         model = base_model

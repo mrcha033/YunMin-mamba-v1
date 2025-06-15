@@ -71,13 +71,13 @@ training:
     warmup_steps_ratio: 0.1       # 10% linear warmup
     min_lr_ratio: 0.1
     
-    # Task-specific epochs (3-10 range with early stopping)
+    # Task-specific epochs (per experimental description)
     # Default subset: sst2, mrpc, qnli, mnli
     epochs:
-      sst2: 5
-      mnli: 8
-      qnli: 5
-      mrpc: 8
+      sst2: 5   # Match experimental description
+      mnli: 10  # Match experimental description (was 8)
+      qnli: 5   # Standard for this task
+      mrpc: 8   # Standard for this task
       cola: 10
       stsb: 6
       qqp: 3

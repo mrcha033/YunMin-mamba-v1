@@ -34,6 +34,7 @@ from dataclasses import dataclass
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+from tqdm import tqdm
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -361,7 +362,56 @@ class UnifiedTrainingPipeline:
         
         val_dataloader = self.get_dataloader('wikitext103', 'validation', self.config['training']['pretrain'])
         
-        # Training loop
+        # --- Profiling for Dry Run ---
+        if self.pipeline_config.dry_run:
+            self.logger.info("⚡️ Profiler enabled for dry run. Running a few steps to identify bottlenecks...")
+            with torch.profiler.profile(
+                activities=[
+                    torch.profiler.ProfilerActivity.CPU,
+                    torch.profiler.ProfilerActivity.CUDA,
+                ],
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=True
+            ) as prof:
+                for step, batch in enumerate(train_dataloader):
+                    if step >= 5: # Profile 5 steps
+                        break
+                    
+                    input_ids = batch['input_ids'].to(self.device)
+                    labels = batch['labels'].to(self.device)
+
+                    with torch.profiler.record_function("forward_pass"):
+                        logits, all_masks, _ = model(input_ids)
+
+                    with torch.profiler.record_function("loss_computation"):
+                        loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
+                        sparsity_loss = self.calculate_sparsity_loss(all_masks) if model_type == 'sdm' else 0
+                        total_loss = loss + sparsity_loss
+                    
+                    with torch.profiler.record_function("backward_pass"):
+                        total_loss.backward()
+
+                    with torch.profiler.record_function("optimizer_step"):
+                        optimizer.step()
+                        optimizer.zero_grad()
+            
+            self.logger.info("--- PROFILER RESULTS ---")
+            self.logger.info(prof.key_averages(group_by_input_shape=True).table(sort_by="cuda_time_total", row_limit=20))
+            self.logger.info("--- END PROFILER RESULTS ---")
+            # Since this was just for profiling, we can exit early.
+            self.logger.info("Dry run profiling complete. Exiting.")
+            return model # Or raise an exception to stop
+
+
+        # --- Main Training Loop ---
+        self.logger.info("Starting main training loop...")
+        progress_bar = tqdm(
+            total=pretrain_config['max_steps'],
+            desc=f"Training {model_type} model",
+            unit="steps"
+        )
+        
         model.train()
         step = 0
         max_steps = pretrain_config['max_steps']

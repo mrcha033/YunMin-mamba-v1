@@ -310,29 +310,24 @@ class SelectiveSSM(nn.Module):
     def _create_mask(self) -> torch.Tensor:
         """
         Create a binary mask for SDM using Gumbel-Sigmoid.
-        
-        Returns:
-            Tensor of shape (d_inner,) containing mask values
+        This function now correctly handles training and inference modes.
         """
-        if not self.use_sdm:
-            return None
-
         if self.training:
-            # Gumbel-Sigmoid trick for differentiable binary sampling
-            uniform_noise = torch.rand_like(self.z_logits)
-            gumbel_noise = -torch.log(-torch.log(uniform_noise + 1e-8) + 1e-8)
-            
-            logits_with_noise = (self.z_logits + gumbel_noise) / self.temperature
-            self.stochastic_mask = torch.sigmoid(logits_with_noise)
-            return self.stochastic_mask
+            # In training, always create a new stochastic mask for each forward pass
+            # as per the Gumbel-Softmax trick for exploration.
+            gumbel_noise = torch.rand_like(self.z_logits, device=self.z_logits.device).log().neg().log().neg()
+            gumbel_output = (self.z_logits + gumbel_noise) / self.temperature
+            stochastic_mask = torch.sigmoid(gumbel_output)
+            return stochastic_mask
         else:
-            # At inference time, use deterministic binary mask
-            self.deterministic_mask = (self.z_logits > 0).float()
+            # In inference, create a deterministic mask once and cache it.
+            if self.deterministic_mask is None:
+                self.deterministic_mask = (self.z_logits > 0).float()
             return self.deterministic_mask
             
     def get_sparsity_stats(self) -> Optional[Dict[str, float]]:
         """
-        Get current sparsity statistics for monitoring.
+        Get sparsity statistics for the current layer.
         (Only used if use_sdm=True)
         """
         if not self.use_sdm:

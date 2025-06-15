@@ -297,6 +297,11 @@ class UnifiedTrainingPipeline:
         """
         Run the pre-training phase for either a baseline or SDM model.
         """
+        # Enable anomaly detection for debugging inplace modification errors
+        if self.pipeline_config.debug or self.pipeline_config.dry_run:
+            self.logger.info("🕵️ Anomaly detection enabled for autograd.")
+            torch.autograd.set_detect_anomaly(True)
+
         self.state['phase'] = f"pretrain_{model_type}"
         self.logger.info(f"🚀 Starting pre-train phase for {model_type.upper()} model...")
 

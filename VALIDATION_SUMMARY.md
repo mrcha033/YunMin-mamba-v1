@@ -8,7 +8,7 @@ We have successfully implemented **Phase 4: Integration & Validation**, completi
 
 ### Validation Framework Scale
 - **Total Lines of Code**: 3,510+ lines across 8 validation scripts
-- **Model Variants**: 6 complete model variants for thorough ablation study
+ - **Model Variants**: 7 complete model variants for thorough ablation study
 - **Hypothesis Tests**: 4 comprehensive hypothesis validations (H1-H4)
 - **Metrics Evaluated**: 10+ performance metrics across all optimization axes
 - **Scripts Created**: 8 specialized validation and analysis scripts
@@ -34,12 +34,14 @@ demo_validation.py:         400+ lines - Complete demonstration script
 The end-to-end pipeline follows this sequential optimization:
 1. **M_base** (Baseline Mamba) → Apply CSP analysis → **M_CSP** (Hardware-aware)
 2. **M_CSP** → Apply SDM pre-training → **M_SDM** (Hardware + Data aware)
-3. **M_SDM** → Apply SGH-PEFT fine-tuning → **M_full** (Complete co-design)
+3. **M_SDM** → Apply SGH-PEFT fine-tuning → **M_sdm_sgh** (Data + Parameter aware)
+4. **M_sdm_sgh** → Integrate all pillars → **M_full** (Complete co-design)
 
 #### Ablation Study Models
 - **M_base**: Original baseline Mamba model (control group)
 - **M_CSP**: M_base + CSP permutation (Pillar 1 isolation)
 - **M_SDM**: M_base + SDM sparsity (Pillar 2 isolation)
+- **M_sdm_sgh**: M_SDM + SGH-PEFT (Pillars 2+3 combined)
 - **M_SGH**: M_base + SGH-PEFT with proxy importance (Pillar 3 with proxy)
 - **M_challenge**: M_base + magnitude pruning + uniform LoRA (strongest baseline)
 - **M_full**: Complete co-design (synergistic integration of all pillars)
@@ -83,6 +85,7 @@ The end-to-end pipeline follows this sequential optimization:
 | M_base | 2.47 | 0.5 | 100.0% | 0.827 | 8.5 |
 | M_CSP | 2.02 | 0.5 | 100.0% | 0.828 | 8.3 |
 | M_SDM | 2.25 | 0.4 | 100.0% | 0.813 | 8.7 |
+| M_sdm_sgh | 2.20 | 0.4 | 6.0% | 0.853 | 8.4 |
 | M_SGH | 2.50 | 0.5 | 6.0% | 0.840 | 8.5 |
 | M_challenge | 2.31 | 0.4 | 8.0% | 0.844 | 8.9 |
 | **M_full** | **1.88** | **0.4** | **4.0%** | **0.868** | **8.2** |
@@ -132,7 +135,7 @@ python scripts/run_complete_validation.py \
     --output_dir validation_results
 
 # Output includes:
-# - All 6 model variants generated
+# - All 7 model variants generated
 # - Comprehensive validation results  
 # - Statistical significance testing
 # - Publication-ready plots

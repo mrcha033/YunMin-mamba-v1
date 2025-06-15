@@ -164,8 +164,8 @@ model:
   d_conv: 4             # Convolution kernel size
 
 training:
-  batch_size: 32        # Training batch size
-  learning_rate: 1e-4   # Learning rate
+  batch_size: 128       # Training batch size
+  learning_rate: 2e-4   # Learning rate
   max_steps: 100000     # Maximum training steps
 ```
 
@@ -300,6 +300,7 @@ We have successfully transformed this framework from proof-of-concept to **produ
 - `scripts/evaluate_latency.py`: High-precision A100 profiling with CUDA events
 - `scripts/profile_memory.py`: GPU memory analysis for training and inference
 - `demo_full_scale_validation.py`: Production demonstration with realistic results
+- `configs/model_config.yaml`: Default model configuration (based on `mamba_130m.yaml`)
 - `configs/mamba_130m.yaml`, `configs/mamba_370m.yaml`: Full-scale model configurations
 - `data/wikitext103.py`, `data/glue.py`: Complete dataset implementations
 
@@ -358,10 +359,10 @@ python scripts/run_finetuning.py --config configs/finetune_sgh_peft.yaml --sdm_m
 python demo_validation.py
 
 # Run full validation pipeline (with real models)
-python scripts/run_complete_validation.py --base_model checkpoints/baseline/model.pt --output_dir validation_results
+python scripts/run_complete_validation.py --base_model checkpoints/baseline/model.pt --output_dir validation_results --config configs/model_config.yaml
 
 # Individual model validation
-python scripts/run_validation_suite.py --model_group M_full --checkpoint checkpoints/full/model_full.pt --validate_all
+python scripts/run_validation_suite.py --model_group M_full --checkpoint checkpoints/full/model_full.pt --validate_all --config configs/model_config.yaml
 
 # Generate publication plots
 python scripts/analyze_results.py --results_dir validation_results/results --output_dir validation_results/plots

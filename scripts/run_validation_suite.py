@@ -36,7 +36,7 @@ from models.sgh_peft import (
     MaskedLoRALayer,
     create_sgh_peft_model,
 )
-from data.wikitext103 import get_wiktext103_dataloader
+from data.wikitext103 import get_wikitext103_dataloader
 from data.glue import get_glue_dataloader
 from utils.profiling import count_parameters, measure_latency
 from transformers import AutoTokenizer
@@ -169,7 +169,7 @@ class ValidationSuite:
         
         # 2. Perplexity Calculation on WikiText-103
         try:
-            val_dataloader = get_wiktext103_dataloader(
+            val_dataloader = get_wikitext103_dataloader(
                 tokenizer=self.tokenizer,
                 batch_size=8,
                 max_length=1024,

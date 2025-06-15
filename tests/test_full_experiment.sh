@@ -303,7 +303,7 @@ project_imports = [
     ('models.baseline_ssm', 'BaselineSSM'),
     ('models.sdm_ssm', 'SDM_SSM'),
     ('utils.logger', 'setup_logger'),
-    ('data.wikitext103', 'get_wiktext103_dataloader'),
+    ('data.wikitext103', 'get_wikitext103_dataloader'),
 ]
 
 project_failed = []

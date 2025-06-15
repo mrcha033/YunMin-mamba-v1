@@ -26,7 +26,7 @@ parent_dir = os.path.dirname(script_dir)
 sys.path.insert(0, parent_dir)
 
 from models.sdm_ssm import SDM_SSM, SDM_MambaBlock
-from data.wikitext103 import get_wiktext103_dataloader
+from data.wikitext103 import get_wikitext103_dataloader
 from utils.profiling import count_parameters
 
 

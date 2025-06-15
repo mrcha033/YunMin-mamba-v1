@@ -247,21 +247,9 @@ else
     echo "✅ M_challenge checkpoint found, skipping generation"
 fi
 
+
 # Step B4: Generate M_full model
 echo "Step B4: Generating M_full model..."
-
-# Step B0: Generate M_challenge baseline
-echo "Step B0: Generating M_challenge baseline..."
-if [[ ! -f "${CHALLENGE_CHECKPOINT}" ]]; then
-    python scripts/create_challenge_baseline.py \
-        --base_model "${BASELINE_CHECKPOINT}" \
-        --output_path "${CHALLENGE_CHECKPOINT}" \
-        --config "${CONFIG_FILE}" \
-        --sdm_checkpoint "${SDM_CHECKPOINT}"
-    echo "✅ M_challenge baseline generated"
-else
-    echo "✅ M_challenge checkpoint found, skipping generation"
-fi
 
 if [[ ! -f "${FULL_CHECKPOINT}" ]]; then
     echo "Running full pipeline to generate M_full..."

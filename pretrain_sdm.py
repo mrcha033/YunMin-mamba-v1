@@ -303,6 +303,9 @@ def main():
 
     if warmup_steps_ratio is not None:
         warmup_steps = int(max_steps * float(warmup_steps_ratio))
+
+    # Expose computed max_steps for later checks
+    training_config['max_steps'] = max_steps
     
     # Get data configuration
     data_config = config.get('data', {})

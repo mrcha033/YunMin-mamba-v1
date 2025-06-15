@@ -632,28 +632,27 @@ class UnifiedTrainingPipeline:
         for task in glue_tasks:
             self.logger.info(f"🎯 Fine-tuning on {task.upper()}...")
             
-            # Create GLUE dataloader for this task
+            # Get data loaders
             try:
-                train_dataloader = self.get_dataloader('glue', 'train', {'task': task, **finetune_config})
-                
-                val_dataloader = self.get_dataloader('glue', 'validation', {'task': task, **finetune_config})
+                train_dataloader = self.get_dataloader(
+                    'glue', 'train', self.config['training']['finetune'], task_name=task
+                )
+                val_dataloader = self.get_dataloader(
+                    'glue', 'validation', self.config['training']['finetune'], task_name=task
+                )
             except Exception as e:
                 self.logger.error(f"Failed to load GLUE {task}: {e}")
-                # Skip this task entirely - no simulation fallbacks for production
-                results[task] = {
-                    'accuracy': 0.0,
-                    'epochs': 0,
-                    'status': 'failed',
-                    'error': str(e)
-                }
                 continue
+
+            # Optimizer
+            params_to_optimize = [p for p in model.parameters() if p.requires_grad]
             
             # Task-specific fine-tuning
             model.train()
             
             # Setup optimizer for fine-tuning
             optimizer = torch.optim.AdamW(
-                [p for p in model.parameters() if p.requires_grad],
+                params_to_optimize,
                 lr=float(finetune_config['learning_rate']),
                 weight_decay=float(finetune_config['weight_decay'])
             )
@@ -1226,7 +1225,7 @@ class UnifiedTrainingPipeline:
         model.train()
         return total_flops
 
-    def get_dataloader(self, name: str, split: str, config: Dict[str, Any]):
+    def get_dataloader(self, name: str, split: str, config: Dict[str, Any], task_name: str = None):
         """Factory method for creating dataloaders."""
         if name == 'wikitext103':
             return get_wikitext103_dataloader(
@@ -1237,7 +1236,7 @@ class UnifiedTrainingPipeline:
             )
         elif name == 'glue':
             return get_glue_dataloader(
-                task=config['task'],
+                task=task_name or config['task'],
                 tokenizer=self.tokenizer,
                 batch_size=config['micro_batch_size'],
                 max_length=self.config['data']['max_length'],

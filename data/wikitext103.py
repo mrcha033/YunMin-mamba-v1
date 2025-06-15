@@ -247,6 +247,9 @@ def get_wikitext103_dataloader(
         )
         shuffle = False
     
+    # Remove arguments that are not for DataLoader
+    kwargs.pop('tokenizer', None)
+
     # Create DataLoader
     dataloader = DataLoader(
         dataset,

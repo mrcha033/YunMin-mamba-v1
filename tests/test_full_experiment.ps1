@@ -25,7 +25,7 @@ Write-Host ""
 Write-Host "Checking required files..." -ForegroundColor Yellow
 
 $ExperimentScript = Join-Path $ProjectRoot "run_full_experiment.sh"
-$ConfigFile = Join-Path $ProjectRoot "configs" "mamba_$ModelSize.yaml"
+$ConfigFile = Join-Path $ProjectRoot "configs\mamba_$ModelSize.yaml"
 
 if (-not (Test-Path $ExperimentScript)) {
     Write-Host "run_full_experiment.sh not found: $ExperimentScript" -ForegroundColor Red
@@ -173,8 +173,8 @@ try {
     exit 1
 }
 
-# Cleanup test directory
-Remove-Item -Path $TestDir -Recurse -Force
+# Cleanup test directory (if it exists)
+# Note: No test directory was created in this script
 
 Write-Host ""
 Write-Host "All tests passed!" -ForegroundColor Green

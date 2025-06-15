@@ -41,6 +41,7 @@ from models.sgh_peft import create_sgh_peft_model, SGHPEFTConfig
 from data.wikitext103 import get_wikitext103_dataloader
 from data.glue import get_glue_dataloader
 from utils.logger import setup_logger
+from utils.metrics_logger import ComprehensiveMetricsLogger
 from transformers import AutoTokenizer
 
 # Advanced analysis imports (if available)
@@ -61,6 +62,7 @@ class PipelineConfig:
     model_type: str = "sdm"
     device: str = "cuda"
     debug: bool = False
+    dry_run: bool = False
 
 
 class UnifiedTrainingPipeline:
@@ -77,6 +79,11 @@ class UnifiedTrainingPipeline:
     def __init__(self, config: PipelineConfig):
         self.config = self.load_unified_config(config.config_path)
         self.pipeline_config = config
+        
+        # 🔧 DRY RUN MODE: Reduce resource usage for testing
+        if config.dry_run:
+            self.logger.info("🧪 DRY RUN MODE ENABLED - Reducing resource usage")
+            self.apply_dry_run_settings()
         
         # Setup experiment tracking
         self.experiment_name = config.experiment_name or f"unified_exp_{int(time.time())}"
@@ -108,8 +115,16 @@ class UnifiedTrainingPipeline:
             'gpu_memory_peak': 0.0
         }
         
+        # Initialize comprehensive metrics logger
+        self.metrics_logger = ComprehensiveMetricsLogger(
+            output_dir=self.output_dir,
+            experiment_name=self.experiment_name,
+            use_wandb=self.config['logging']['use_wandb'] and not config.dry_run  # Disable W&B in dry run
+        )
+        
         # Log initialization
-        self.logger.info(f"Pipeline initialized: {self.experiment_name}")
+        dry_run_info = " (DRY RUN)" if config.dry_run else ""
+        self.logger.info(f"Pipeline initialized: {self.experiment_name}{dry_run_info}")
         self.logger.info(f"Output: {self.output_dir}")
         self.logger.info(f"Device: {self.device}")
         self.logger.info(f"Advanced analysis: {'Available' if ADVANCED_ANALYSIS_AVAILABLE else 'Not available'}")
@@ -259,6 +274,9 @@ class UnifiedTrainingPipeline:
             raise
         
         finally:
+            # Finalize comprehensive metrics logging
+            self.metrics_logger.finalize()
+            
             if self.config['logging']['use_wandb']:
                 wandb.finish()
         
@@ -303,12 +321,30 @@ class UnifiedTrainingPipeline:
             eps=pretrain_config['eps']
         )
         
-        # Create dataloader
+        # Setup learning rate scheduler with warmup
+        total_steps = min(pretrain_config['max_steps'], pretrain_config['max_epochs'] * 1000)  # Estimate
+        warmup_steps = int(0.1 * total_steps)  # 10% warmup
+        scheduler = torch.optim.lr_scheduler.OneCycleLR(
+            optimizer,
+            max_lr=pretrain_config['learning_rate'],
+            total_steps=total_steps,
+            pct_start=0.1,  # 10% warmup
+            anneal_strategy='linear'
+        )
+        
+        # Create dataloaders
         train_dataloader = get_wikitext103_dataloader(
             tokenizer=self.tokenizer,
             batch_size=pretrain_config['micro_batch_size'],
             max_length=self.config['data']['max_length'],
             split="train"
+        )
+        
+        val_dataloader = get_wikitext103_dataloader(
+            tokenizer=self.tokenizer,
+            batch_size=pretrain_config['micro_batch_size'],
+            max_length=self.config['data']['max_length'],
+            split="validation"
         )
         
         # Training loop
@@ -357,24 +393,59 @@ class UnifiedTrainingPipeline:
                 batch_count += 1
                 self.state['step'] = step
                 
-                # Logging
+                # Update learning rate
+                scheduler.step()
+                current_lr = scheduler.get_last_lr()[0]
+                
+                # 💾 COMPREHENSIVE METRICS LOGGING (EVERY STEP)
+                current_loss = loss.item()
+                kwargs = {}
+                if model_type == 'sdm':
+                    kwargs['sparsity_loss'] = sparsity_loss.item()
+                
+                snapshot = self.metrics_logger.log_step_metrics(
+                    step=step,
+                    epoch=epoch,
+                    train_loss=current_loss,
+                    learning_rate=current_lr,
+                    optimizer=optimizer,
+                    **kwargs
+                )
+                
+                # Console logging (less frequent)
                 if step % pretrain_config['log_interval'] == 0:
-                    current_loss = loss.item()
-                    self.logger.info(f"Step {step:6d}/{max_steps}, Loss: {current_loss:.4f}")
+                    gpu_info = f"GPU: {snapshot.gpu_memory_used:.1f}GB" if snapshot.gpu_memory_used else "GPU: N/A"
+                    self.logger.info(
+                        f"Step {step:6d}/{max_steps} | Epoch {epoch:2d} | "
+                        f"Loss: {current_loss:.4f} | LR: {current_lr:.2e} | "
+                        f"{gpu_info} | Time: {snapshot.step_time:.3f}s"
+                    )
+                
+                # Track best loss
+                if current_loss < best_loss:
+                    best_loss = current_loss
+                
+                # 📊 VALIDATION EVALUATION (EVERY val_interval STEPS)
+                val_interval = pretrain_config.get('eval_interval', 1000)
+                if step % val_interval == 0:
+                    self.logger.info(f"🔍 Running validation at step {step}...")
+                    val_loss, val_ppl = self.run_validation_eval(model, val_dataloader)
                     
-                    # W&B logging
+                    # Update latest metrics snapshot with validation
+                    if self.metrics_logger.metrics_history:
+                        latest = self.metrics_logger.metrics_history[-1]
+                        latest.val_loss = val_loss
+                        latest.val_perplexity = val_ppl
+                    
+                    self.logger.info(f"📊 Validation - Loss: {val_loss:.4f}, PPL: {val_ppl:.2f}")
+                    
+                    # Log validation to W&B
                     if self.config['logging']['use_wandb']:
-                        log_dict = {f"{phase_name}/loss": current_loss, "step": step}
-                        if model_type == 'sdm':
-                            log_dict.update({
-                                f"{phase_name}/task_loss": task_loss.item(),
-                                f"{phase_name}/sparsity_loss": sparsity_loss.item()
-                            })
-                        wandb.log(log_dict)
-                    
-                    # Track best loss
-                    if current_loss < best_loss:
-                        best_loss = current_loss
+                        wandb.log({
+                            f"{phase_name}/val_loss": val_loss,
+                            f"{phase_name}/val_perplexity": val_ppl,
+                            "step": step
+                        })
                 
                 # Checkpointing
                 if step % pretrain_config['save_interval'] == 0:
@@ -385,9 +456,21 @@ class UnifiedTrainingPipeline:
                 if step >= max_steps:
                     break
             
-            # Epoch summary
+            # Epoch summary with comprehensive metrics
             avg_epoch_loss = epoch_loss / batch_count
             self.logger.info(f"Epoch {epoch+1}: Avg Loss = {avg_epoch_loss:.4f}")
+            
+            # 📊 LOG EPOCH SUMMARY
+            if self.metrics_logger.metrics_history:
+                # Get metrics for this epoch
+                epoch_metrics = [m for m in self.metrics_logger.metrics_history if m.epoch == epoch]
+                if epoch_metrics:
+                    avg_lr = sum(m.learning_rate for m in epoch_metrics) / len(epoch_metrics)
+                    avg_step_time = sum(m.step_time for m in epoch_metrics) / len(epoch_metrics)
+                    gpu_peak = max(m.gpu_memory_used for m in epoch_metrics if m.gpu_memory_used) if any(m.gpu_memory_used for m in epoch_metrics) else 0
+                    
+                    self.logger.info(f"📊 Epoch {epoch+1} Summary:")
+                    self.logger.info(f"   Avg LR: {avg_lr:.2e} | Avg Step Time: {avg_step_time:.3f}s | GPU Peak: {gpu_peak:.1f}GB")
             
             if step >= max_steps:
                 break
@@ -404,8 +487,53 @@ class UnifiedTrainingPipeline:
             'model_type': model_type
         }
         
+        # Finalize metrics logging for this phase
+        self.metrics_logger.finalize()
+        
         self.logger.info(f"✅ {model_type} pre-training completed")
+        self.logger.info(f"📊 Metrics saved to: {self.metrics_logger.metrics_dir}")
         return model
+    
+    def run_validation_eval(self, model, val_dataloader, max_eval_batches=100):
+        """
+        Run validation evaluation and return loss and perplexity.
+        
+        Args:
+            model: Model to evaluate
+            val_dataloader: Validation dataloader
+            max_eval_batches: Maximum number of batches to evaluate (for efficiency)
+            
+        Returns:
+            tuple: (validation_loss, validation_perplexity)
+        """
+        model.eval()
+        total_loss = 0.0
+        total_batches = 0
+        
+        with torch.no_grad():
+            for i, batch in enumerate(val_dataloader):
+                if i >= max_eval_batches:
+                    break
+                    
+                input_ids = batch['input_ids'].to(self.device)
+                outputs = model(input_ids)
+                
+                # Calculate loss
+                loss = torch.nn.functional.cross_entropy(
+                    outputs.view(-1, outputs.size(-1)),
+                    input_ids.view(-1),
+                    reduction='mean'
+                )
+                
+                total_loss += loss.item()
+                total_batches += 1
+        
+        model.train()  # Return to train mode
+        
+        avg_val_loss = total_loss / total_batches if total_batches > 0 else float('inf')
+        val_perplexity = torch.exp(torch.tensor(avg_val_loss)).item()
+        
+        return avg_val_loss, val_perplexity
     
     def initialize_sdm_from_baseline(self, sdm_model: SDM_SSM, baseline_model: BaselineSSM):
         """Initialize SDM model parameters from baseline model (warm start)."""
@@ -632,6 +760,40 @@ class UnifiedTrainingPipeline:
         self.logger.info(f"  📊 {results_path}")
         self.logger.info(f"  📋 {summary_path}")
 
+    def apply_dry_run_settings(self):
+        """Apply dry run settings to reduce resource usage."""
+        # Reduce model size
+        self.config['model']['d_model'] = 128
+        self.config['model']['n_layer'] = 2
+        self.config['model']['vocab_size'] = 1000
+        self.config['model']['d_state'] = 8
+        self.config['model']['d_conv'] = 2
+        
+        # Reduce training steps
+        self.config['training']['pretrain']['max_steps'] = 10
+        self.config['training']['pretrain']['max_epochs'] = 1
+        self.config['training']['pretrain']['micro_batch_size'] = 2
+        self.config['training']['pretrain']['log_interval'] = 2
+        self.config['training']['pretrain']['save_interval'] = 5
+        self.config['training']['pretrain']['eval_interval'] = 5
+        
+        # Reduce fine-tuning
+        for task in self.config['training']['finetune']['epochs']:
+            self.config['training']['finetune']['epochs'][task] = 1
+        self.config['training']['finetune']['micro_batch_size'] = 2
+        
+        # Reduce data size
+        self.config['data']['max_length'] = 128
+        
+        # Reduce GLUE tasks for testing
+        self.config['experiments']['glue_tasks'] = ['sst2']
+        
+        # Disable W&B
+        self.config['logging']['use_wandb'] = False
+        
+        # Set dry run output directory
+        self.config['paths']['output_dir'] = './dry_run_experiments'
+
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -664,6 +826,8 @@ Examples:
                        help="Device to use (cuda/cpu)")
     parser.add_argument("--debug", action="store_true",
                        help="Enable debug mode (keeps intermediate models)")
+    parser.add_argument("--dry-run", action="store_true",
+                       help="Enable dry run mode (minimal resources for testing)")
     
     return parser.parse_args()
 
@@ -693,6 +857,7 @@ def create_unified_config():
                 'max_steps': 20000,
                 'log_interval': 100,
                 'save_interval': 1000,
+                'eval_interval': 500,  # Validation evaluation interval
                 'max_grad_norm': 1.0
             },
             'finetune': {
@@ -783,7 +948,8 @@ def main():
         mode=args.mode,
         model_type=args.model_type,
         device=args.device,
-        debug=args.debug
+        debug=args.debug,
+        dry_run=getattr(args, 'dry_run', False)
     )
     
     try:
